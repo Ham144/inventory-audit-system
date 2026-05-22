@@ -14,6 +14,7 @@ import locationApi from "../api/LocationApi";
 import ProductApi from "../api/product.api";
 import { getUserInfo } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
+import { useUserInfo } from "~/store";
 
 interface LocationItem {
   code: string;
@@ -33,6 +34,36 @@ interface ProductItem {
   systemQty?: number;
 }
 
+function getProductSku(product: ProductItem): string {
+  return (product.No || product.sku || "").trim();
+}
+
+function getRakStorageKey(
+  sku: string,
+  locationCode: string,
+  operator: string,
+): string {
+  return `rak-${sku}-${locationCode}-${operator}`;
+}
+
+function getNextRakFromStorage(
+  sku: string,
+  locationCode: string,
+  operator: string,
+): number {
+  const raw = localStorage.getItem(
+    getRakStorageKey(sku, locationCode, operator),
+  );
+  if (raw === null || raw === "") {
+    return 1;
+  }
+  const lastRak = Number(raw);
+  if (!Number.isFinite(lastRak) || lastRak < 1) {
+    return 1;
+  }
+  return lastRak + 1;
+}
+
 export default function Scan() {
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [selectedLocation, setSelectedLocation] = useState("");
@@ -41,15 +72,29 @@ export default function Scan() {
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(
     null,
   );
+  const { userInfo } = useUserInfo();
+
   const [qty, setQty] = useState("");
-  const [rak, setRak] = useState("");
+  const [rak, setRak] = useState(1);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
-  const [operatorName, setOperatorName] = useState("Admin Lapangan");
+  const [operatorName, setOperatorName] = useState(userInfo?.username);
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error" | "info";
   } | null>(null);
+
+  useEffect(() => {
+    if (!selectedProduct || !selectedLocation) return;
+
+    const sku = getProductSku(selectedProduct);
+    if (!sku) return;
+
+    const operator = userInfo?.username || operatorName;
+    if (!operator) return;
+
+    setRak(getNextRakFromStorage(sku, selectedLocation, operator));
+  }, [selectedProduct, selectedLocation, userInfo?.username, operatorName]);
 
   // Fetch operator user info on mount
   useEffect(() => {
@@ -106,7 +151,7 @@ export default function Scan() {
     const delayDebounce = setTimeout(async () => {
       setIsSearchingProducts(true);
       try {
-        const res = await ProductApi.getAllProducts(searchQuery, 1, 10);
+        const res = await ProductApi.searchProducts(searchQuery, 1, 10);
         if (Array.isArray(res)) {
           setProducts(res);
         } else if (res && Array.isArray(res.data)) {
@@ -151,13 +196,17 @@ export default function Scan() {
 
     // Save to Postgres Database instead of Local Storage
     try {
-      const response = await axiosInstance.post("/so/api/opname/scan", {
+      const response = await axiosInstance.post("/api/opname/scan", {
         sku: selectedProduct.No || selectedProduct.sku || "",
-        name: selectedProduct.Description || selectedProduct.Description_3 || selectedProduct.name || "",
+        name:
+          selectedProduct.Description ||
+          selectedProduct.Description_3 ||
+          selectedProduct.name ||
+          "",
         rak: Number(rak),
         qty: Number(qty),
         operator: operatorName,
-        locationCode: selectedLocation
+        locationCode: selectedLocation,
       });
 
       if (response.data) {
@@ -167,7 +216,11 @@ export default function Scan() {
         setSelectedProduct(null);
         setSearchQuery("");
         setQty("");
-        setRak("");
+        const sku = getProductSku(selectedProduct);
+        localStorage.setItem(
+          getRakStorageKey(sku, selectedLocation, operatorName || ""),
+          String(Number(rak)),
+        );
       }
     } catch (err) {
       showToast("Gagal menyimpan data scan ke server", "error");
@@ -226,7 +279,7 @@ export default function Scan() {
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
           <h2 className="text-sm font-extrabold tracking-wide text-slate-900 mb-6 uppercase flex items-center gap-2">
             <FileText className="h-4 w-4 text-indigo-500" />
-            Formulir Scan Barang
+            Formulir Input Barang
           </h2>
 
           <form onSubmit={handleSaveScan} className="space-y-6">
@@ -246,11 +299,16 @@ export default function Scan() {
                   {isLoadingLocations ? (
                     <option>Memuat wilayah...</option>
                   ) : (
-                    locations.map((loc) => (
-                      <option key={loc.code} value={loc.code}>
-                        {loc.name || loc.description || loc.code}
+                    <>
+                      <option key={null} value="">
+                        Pilih Location Dulu
                       </option>
-                    ))
+                      {locations.map((loc) => (
+                        <option key={loc.code} value={loc.code}>
+                          {loc.name || loc.description || loc.code}
+                        </option>
+                      ))}
+                    </>
                   )}
                 </select>
                 <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none border-l border-slate-200 pl-2">
@@ -309,7 +367,9 @@ export default function Scan() {
                         type="button"
                         onClick={() => {
                           setSelectedProduct(p);
-                          setSearchQuery(p.Description || p.Description_3 || p.name || "");
+                          setSearchQuery(
+                            p.Description || p.Description_3 || p.name || "",
+                          );
                         }}
                         className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between text-xs"
                       >
@@ -333,7 +393,9 @@ export default function Scan() {
                 <div className="p-3 rounded-2xl bg-indigo-50/50 border border-indigo-150/80 flex items-center justify-between">
                   <div className="text-xs">
                     <p className="font-extrabold text-indigo-950 line-clamp-1">
-                      {selectedProduct.Description || selectedProduct.Description_3 || selectedProduct.name}
+                      {selectedProduct.Description ||
+                        selectedProduct.Description_3 ||
+                        selectedProduct.name}
                     </p>
                     <p className="text-[10px] font-mono text-indigo-600 font-bold mt-0.5">
                       SKU: {selectedProduct.No || selectedProduct.sku}
@@ -357,14 +419,14 @@ export default function Scan() {
                   type="number"
                   placeholder="Masukkan Nomor Rak (contoh: 1, 2, 3)..."
                   value={rak}
-                  onChange={(e) => setRak(e.target.value)}
-                  min="1"
+                  onChange={(e) => setRak(Number(e.target.value))}
+                  min={1}
                   className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                 />
                 {rak && (
                   <button
                     type="button"
-                    onClick={() => setRak("")}
+                    onClick={() => setRak(1)}
                     className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
                   >
                     <X className="h-3.5 w-3.5" />

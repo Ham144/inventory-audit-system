@@ -11,25 +11,25 @@ datasource db {
 }
 
 model OpnameSession {
-  id           String    @id @default(uuid())
-  name         String    // Nama sesi opname (misal: "Opname Mei 2026")
-  locationCode String    
-  status       String    @default("ONGOING") // ONGOING, COMPLETED
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id           String        @id @default(uuid())
+  name         String // Nama sesi opname (misal: "Opname Mei 2026")
+  locationCode String
+  status       String        @default("ONGOING") // ONGOING, COMPLETED
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   scans        ScanLog[]
   compareItems CompareItem[]
 }
 
 model ScanLog {
-  id        String   @id @default(uuid())
-  sku       String   // SKU barang / No dari ERP (contoh: "SRCEZ18DGR")
-  name      String   // Deskripsi barang
-  rak       Int      // Spesifik rak (contoh: 1)
-  qty       Int      // Jumlah fisik hasil scan
-  operator  String   // Username petugas lapangan
-  createdAt DateTime @default(now())
-  locationCode String   // Wilayah / Lokasi gudang (misal: "01")
+  id           String   @id @default(uuid())
+  sku          String // SKU barang / No dari ERP (contoh: "SRCEZ18DGR")
+  name         String // Deskripsi barang
+  rak          Int // Spesifik rak (contoh: 1)
+  qty          Int // Jumlah fisik hasil scan
+  operator     String // Username petugas lapangan
+  createdAt    DateTime @default(now())
+  locationCode String // Wilayah / Lokasi gudang
 
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -38,17 +38,18 @@ model ScanLog {
   @@index([sessionId])
 }
 
+//ini state terbaru compare nav
 model CompareItem {
-  id           String   @id @default(uuid())
-  sku          String
-  name         String
-  physicalQty  Int      @default(0)
-  systemQty    Int      @default(0)
-  status       String   @default("BELUM_COMPARE") // SESUAI, SELISIH, BELUM_COMPARE
-  updatedAt    DateTime @default(now())
-
-  sessionId    String
-  session      OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  sku         String
+  name        String
+  physicalQty Int      @default(0)
+  systemQty   Int      @default(0)
+  status      String   @default("BELUM_COMPARE") // SESUAI, SELISIH, BELUM_COMPARE
+  updatedAt   DateTime @default(now())
+  
+  sessionId String
+  session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, sku])
 }

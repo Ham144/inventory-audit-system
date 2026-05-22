@@ -1,7 +1,7 @@
 {
   "name": "backend-stok-opname",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -23,21 +23,23 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.3",
     "ldapjs-client": "^0.1.7",
-    "pg": "^8.21.0",
-    "typescript": "^6.0.3"
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/ldapjs-client": "^0.1.4",
     "@types/node": "^24.10.1",
     "@types/pg": "^8.20.0",
     "@types/redis": "^4.0.11",
     "nodemon": "^3.1.14",
     "prisma": "^7.8.0",
-    "tsx": "^4.19.3"
+    "tsx": "^4.19.3",
+    "typescript": "^6.0.3"
   }
 }

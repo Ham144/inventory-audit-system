@@ -1,22 +1,22 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router";
-import { 
-  KeyRound, 
-  User, 
-  Layers, 
-  Sparkles, 
-  AlertCircle, 
+import {
+  KeyRound,
+  User,
+  Layers,
+  Sparkles,
+  AlertCircle,
   ArrowRight,
   ShieldCheck,
-  Building
+  Building,
 } from "lucide-react";
 import { loginLdap, loginApp } from "../api/authApi";
 
 export default function Login() {
   const navigate = useNavigate();
   const [loginType, setLoginType] = useState<"ldap" | "app">("ldap");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("yafizham");
+  const [password, setPassword] = useState("caturposv1!");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -39,16 +39,21 @@ export default function Login() {
       }
 
       // Check response status
-      if (res && (res.status === 200 || res.status === 201 || res.data?.success)) {
+      if (
+        res &&
+        (res.status === 200 || res.status === 201 || res.data?.success)
+      ) {
         navigate("/");
       } else {
-        setErrorMsg(res?.data?.message || "Login gagal, silakan periksa kredensial Anda.");
+        setErrorMsg(
+          res?.data?.message || "Login gagal, silakan periksa kredensial Anda.",
+        );
       }
     } catch (err: any) {
       console.error("Login error:", err);
       setErrorMsg(
-        err.response?.data?.message || 
-        "Gagal terhubung ke server auth. Periksa koneksi jaringan Anda."
+        err.response?.data?.message ||
+          "Gagal terhubung ke server auth. Periksa koneksi jaringan Anda.",
       );
     } finally {
       setIsLoading(false);
@@ -66,7 +71,6 @@ export default function Login() {
 
       {/* Card container */}
       <div className="relative z-10 w-full max-w-[420px] bg-white border border-slate-200 rounded-[32px] p-8 shadow-xl shadow-slate-100/50 backdrop-blur-md">
-        
         {/* Brand logo header */}
         <div className="flex flex-col items-center text-center mb-8">
           <div className="p-3.5 bg-linear-to-tr from-indigo-500 to-violet-500 rounded-2xl shadow-lg shadow-indigo-500/10 ring-1 ring-white/20 mb-3.5">

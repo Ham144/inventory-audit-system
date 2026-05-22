@@ -21,7 +21,7 @@ app.use(cors({
 // Database Connection
 connectDB();
 // Public test route
-app.get("/", async (req, res) => {
+app.get("/", async (_req, res) => {
     return res.send("STOK OPNAME BACKEND : 200 (Active and Running)");
 });
 // ==========================================

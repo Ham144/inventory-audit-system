@@ -1,8 +1,30 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
+import { parseCatalogList, resolveStockQty, toCompareItemSeed, } from "../types/catalog.js";
 const router = express.Router();
-// Helper to get or create active session
+const databaseCenter = () => process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
+function errorMessage(error) {
+    return error instanceof Error ? error.message : "Unknown error";
+}
+async function fetchCatalogProducts() {
+    const response = await axios.get(`${databaseCenter()}/api/v1/product/list?limit=50`);
+    return parseCatalogList(response.data);
+}
+async function seedSessionCatalog(sessionId) {
+    try {
+        const dataList = await fetchCatalogProducts();
+        if (dataList.length > 0) {
+            await prisma.compareItem.createMany({
+                data: dataList.map((p) => toCompareItemSeed(p, sessionId)),
+                skipDuplicates: true,
+            });
+        }
+    }
+    catch (err) {
+        console.error("Gagal melakukan populasi produk awal sesi:", errorMessage(err));
+    }
+}
 async function getOrCreateActiveSession(locationCode) {
     let session = await prisma.opnameSession.findFirst({
         where: {
@@ -18,33 +40,20 @@ async function getOrCreateActiveSession(locationCode) {
                 status: "ONGOING",
             },
         });
-        // Optionally populate initial catalog products as CompareItems (limit 50 to match first page)
-        try {
-            const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/list?limit=50`);
-            const dataList = Array.isArray(response.data)
-                ? response.data
-                : Array.isArray(response.data?.data)
-                    ? response.data.data
-                    : [];
-            if (dataList.length > 0) {
-                await prisma.compareItem.createMany({
-                    data: dataList.map((p) => ({
-                        sku: p.No || "",
-                        name: p.Description || p.Description_3 || "",
-                        physicalQty: 0,
-                        systemQty: 0,
-                        status: "BELUM_COMPARE",
-                        sessionId: session.id,
-                    })),
-                    skipDuplicates: true,
-                });
-            }
-        }
-        catch (err) {
-            console.error("Gagal melakukan populasi produk awal sesi:", err.message);
-        }
+        await seedSessionCatalog(session.id);
     }
     return session;
+}
+async function sessionScopeWhere(locationCode) {
+    if (locationCode === "Semua") {
+        const activeSessions = await prisma.opnameSession.findMany({
+            where: { status: "ONGOING" },
+        });
+        const sessionIds = activeSessions.map((s) => s.id);
+        return { sessionId: { in: sessionIds } };
+    }
+    const session = await getOrCreateActiveSession(locationCode);
+    return { sessionId: session.id };
 }
 // 1. GET active session
 router.get("/session/active", async (req, res) => {
@@ -54,7 +63,7 @@ router.get("/session/active", async (req, res) => {
         return res.json(session);
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 2. POST create new session (closes ongoing one)
@@ -62,7 +71,6 @@ router.post("/session/create", async (req, res) => {
     try {
         const { name, locationCode } = req.body;
         const loc = locationCode || "01";
-        // Close all ongoing sessions in this location
         await prisma.opnameSession.updateMany({
             where: {
                 locationCode: loc,
@@ -72,7 +80,6 @@ router.post("/session/create", async (req, res) => {
                 status: "COMPLETED",
             },
         });
-        // Create new session
         const session = await prisma.opnameSession.create({
             data: {
                 name: name || `Opname Sesi - ${new Date().toLocaleDateString("id-ID")}`,
@@ -80,35 +87,11 @@ router.post("/session/create", async (req, res) => {
                 status: "ONGOING",
             },
         });
-        // Populate catalog products
-        try {
-            const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/list?limit=50`);
-            const dataList = Array.isArray(response.data)
-                ? response.data
-                : Array.isArray(response.data?.data)
-                    ? response.data.data
-                    : [];
-            if (dataList.length > 0) {
-                await prisma.compareItem.createMany({
-                    data: dataList.map((p) => ({
-                        sku: p.No || "",
-                        name: p.Description || p.Description_3 || "",
-                        physicalQty: 0,
-                        systemQty: 0,
-                        status: "BELUM_COMPARE",
-                        sessionId: session.id,
-                    })),
-                    skipDuplicates: true,
-                });
-            }
-        }
-        catch (err) {
-            console.error("Gagal populasi awal:", err.message);
-        }
+        await seedSessionCatalog(session.id);
         return res.json(session);
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 3. POST scan log (adds a scan)
@@ -117,11 +100,10 @@ router.post("/scan", async (req, res) => {
         const { sku, name, rak, qty, operator, locationCode } = req.body;
         const loc = locationCode || "01";
         const session = await getOrCreateActiveSession(loc);
-        // Save scan log
         const scan = await prisma.scanLog.create({
             data: {
                 sku,
-                name,
+                name: name ?? "",
                 rak: Number(rak) || 1,
                 qty: Number(qty) || 0,
                 operator: operator || "Admin Lapangan",
@@ -129,32 +111,30 @@ router.post("/scan", async (req, res) => {
                 sessionId: session.id,
             },
         });
-        // Re-sum physical quantities for this SKU in the active session
         const totalPhysical = await prisma.scanLog.aggregate({
             where: {
                 sessionId: session.id,
-                sku: sku,
+                sku,
             },
             _sum: {
                 qty: true,
             },
         });
         const sumQty = totalPhysical._sum.qty || 0;
-        // Find and update or create CompareItem
         const compareItem = await prisma.compareItem.upsert({
             where: {
                 sessionId_sku: {
                     sessionId: session.id,
-                    sku: sku,
+                    sku,
                 },
             },
             update: {
                 physicalQty: sumQty,
-                status: "BELUM_COMPARE", // mark as dirty so user knows to sync
+                status: "BELUM_COMPARE",
             },
             create: {
                 sku,
-                name,
+                name: name ?? "",
                 physicalQty: sumQty,
                 systemQty: 0,
                 status: "BELUM_COMPARE",
@@ -164,27 +144,15 @@ router.post("/scan", async (req, res) => {
         return res.json({ scan, compareItem });
     }
     catch (error) {
-        console.error("Scan API Error:", error.message);
-        return res.status(500).json({ error: error.message });
+        console.error("Scan API Error:", errorMessage(error));
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 4. GET comparison items
 router.get("/comparison", async (req, res) => {
     try {
         const locationCode = req.query.locationCode || "01";
-        let whereClause = {};
-        if (locationCode !== "Semua") {
-            const session = await getOrCreateActiveSession(locationCode);
-            whereClause = { sessionId: session.id };
-        }
-        else {
-            // Find all ongoing sessions
-            const activeSessions = await prisma.opnameSession.findMany({
-                where: { status: "ONGOING" },
-            });
-            const sessionIds = activeSessions.map(s => s.id);
-            whereClause = { sessionId: { in: sessionIds } };
-        }
+        const whereClause = await sessionScopeWhere(locationCode);
         const items = await prisma.compareItem.findMany({
             where: whereClause,
             orderBy: {
@@ -194,32 +162,20 @@ router.get("/comparison", async (req, res) => {
         return res.json(items);
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 5. POST sync manual
 router.post("/sync", async (req, res) => {
     try {
         const locationCode = req.body.locationCode || "01";
-        let whereClause = {};
-        if (locationCode !== "Semua") {
-            const session = await getOrCreateActiveSession(locationCode);
-            whereClause = { sessionId: session.id };
-        }
-        else {
-            const activeSessions = await prisma.opnameSession.findMany({
-                where: { status: "ONGOING" },
-            });
-            const sessionIds = activeSessions.map(s => s.id);
-            whereClause = { sessionId: { in: sessionIds } };
-        }
+        const whereClause = await sessionScopeWhere(locationCode);
         const items = await prisma.compareItem.findMany({
             where: whereClause,
         });
         const updatedItems = [];
         for (const item of items) {
             try {
-                // Resolve dynamic location code per item
                 let loc = locationCode;
                 if (locationCode === "Semua") {
                     const itemSession = await prisma.opnameSession.findUnique({
@@ -227,11 +183,8 @@ router.post("/sync", async (req, res) => {
                     });
                     loc = itemSession?.locationCode || "01";
                 }
-                const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/getStock?No=${item.sku}&locationCode=${loc}`);
-                const realQty = response.data?.quantity ??
-                    response.data?.stock ??
-                    response.data?.data?.quantity ??
-                    0;
+                const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${loc}`);
+                const realQty = resolveStockQty(response.data);
                 const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                 const updated = await prisma.compareItem.update({
                     where: { id: item.id },
@@ -244,14 +197,14 @@ router.post("/sync", async (req, res) => {
                 updatedItems.push(updated);
             }
             catch (err) {
-                console.error(`Gagal sync SKU ${item.sku}:`, err.message);
+                console.error(`Gagal sync SKU ${item.sku}:`, errorMessage(err));
                 updatedItems.push(item);
             }
         }
         return res.json(updatedItems);
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 6. POST reset active session
@@ -263,98 +216,41 @@ router.post("/reset", async (req, res) => {
                 where: { status: "ONGOING" },
             });
             for (const session of activeSessions) {
-                // Delete scans
                 await prisma.scanLog.deleteMany({
                     where: { sessionId: session.id },
                 });
-                // Delete comparison items
                 await prisma.compareItem.deleteMany({
                     where: { sessionId: session.id },
                 });
-                // Re-populate default catalog
-                try {
-                    const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/list?limit=50`);
-                    const dataList = Array.isArray(response.data)
-                        ? response.data
-                        : Array.isArray(response.data?.data)
-                            ? response.data.data
-                            : [];
-                    if (dataList.length > 0) {
-                        await prisma.compareItem.createMany({
-                            data: dataList.map((p) => ({
-                                sku: p.No || "",
-                                name: p.Description || p.Description_3 || "",
-                                physicalQty: 0,
-                                systemQty: 0,
-                                status: "BELUM_COMPARE",
-                                sessionId: session.id,
-                            })),
-                            skipDuplicates: true,
-                        });
-                    }
-                }
-                catch (err) {
-                    console.error("Gagal populasi ulang reset:", err.message);
-                }
+                await seedSessionCatalog(session.id);
             }
-            return res.json({ success: true, message: "Seluruh wilayah berhasil direset ke status awal." });
+            return res.json({
+                success: true,
+                message: "Seluruh wilayah berhasil direset ke status awal.",
+            });
         }
         const session = await getOrCreateActiveSession(locationCode);
-        // Delete scans
         await prisma.scanLog.deleteMany({
             where: { sessionId: session.id },
         });
-        // Delete comparison items
         await prisma.compareItem.deleteMany({
             where: { sessionId: session.id },
         });
-        // Re-populate default catalog
-        try {
-            const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/list?limit=50`);
-            const dataList = Array.isArray(response.data)
-                ? response.data
-                : Array.isArray(response.data?.data)
-                    ? response.data.data
-                    : [];
-            if (dataList.length > 0) {
-                await prisma.compareItem.createMany({
-                    data: dataList.map((p) => ({
-                        sku: p.No || "",
-                        name: p.Description || p.Description_3 || "",
-                        physicalQty: 0,
-                        systemQty: 0,
-                        status: "BELUM_COMPARE",
-                        sessionId: session.id,
-                    })),
-                    skipDuplicates: true,
-                });
-            }
-        }
-        catch (err) {
-            console.error("Gagal populasi ulang reset:", err.message);
-        }
-        return res.json({ success: true, message: "State berhasil direset ke status awal. Scan lokal dibersihkan." });
+        await seedSessionCatalog(session.id);
+        return res.json({
+            success: true,
+            message: "State berhasil direset ke status awal. Scan lokal dibersihkan.",
+        });
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 // 7. GET active scans
 router.get("/scans", async (req, res) => {
     try {
         const locationCode = req.query.locationCode || "01";
-        let whereClause = {};
-        if (locationCode !== "Semua") {
-            const session = await getOrCreateActiveSession(locationCode);
-            whereClause = { sessionId: session.id };
-        }
-        else {
-            const activeSessions = await prisma.opnameSession.findMany({
-                where: { status: "ONGOING" },
-            });
-            const sessionIds = activeSessions.map(s => s.id);
-            whereClause = { sessionId: { in: sessionIds } };
-        }
+        const whereClause = await sessionScopeWhere(locationCode);
         const scans = await prisma.scanLog.findMany({
             where: whereClause,
             orderBy: { createdAt: "desc" },
@@ -362,11 +258,10 @@ router.get("/scans", async (req, res) => {
         return res.json(scans);
     }
     catch (error) {
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 export default router;
-// Cron implementation inside standard setInterval running every 3 hours
 export function startOpnameCron() {
     console.log("⏰ Opname Background Reconciler Cron initialized (Running every 3 hours)");
     setInterval(async () => {
@@ -380,11 +275,8 @@ export function startOpnameCron() {
                 });
                 for (const item of items) {
                     try {
-                        const response = await axios.get(`${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}/api/v1/product/getStock?No=${item.sku}&locationCode=${session.locationCode}`);
-                        const realQty = response.data?.quantity ??
-                            response.data?.stock ??
-                            response.data?.data?.quantity ??
-                            0;
+                        const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${session.locationCode}`);
+                        const realQty = resolveStockQty(response.data);
                         const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                         await prisma.compareItem.update({
                             where: { id: item.id },
@@ -395,15 +287,15 @@ export function startOpnameCron() {
                             },
                         });
                     }
-                    catch (e) {
-                        // Log silent error for single product sync
+                    catch {
+                        // skip single product sync failure
                     }
                 }
             }
             console.log(`⏰ Background opname status reconciliation finished at: ${new Date().toLocaleTimeString()}`);
         }
         catch (err) {
-            console.error("Opname background cron error:", err.message);
+            console.error("Opname background cron error:", errorMessage(err));
         }
-    }, 10800000); // 3 hours
+    }, 10800000);
 }

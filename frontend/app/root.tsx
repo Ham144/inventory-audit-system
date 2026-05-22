@@ -44,6 +44,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 import { useEffect } from "react";
 import { useUserInfo } from "./store";
 import { getUserInfo } from "./api/authApi";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const queryClient = new QueryClient();
 
 export default function App() {
   const setUserInfo = useUserInfo((state) => state.setUserInfo);
@@ -64,7 +67,11 @@ export default function App() {
     fetchUser();
   }, [setUserInfo]);
 
-  return <Outlet />;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Outlet />
+    </QueryClientProvider>
+  );
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

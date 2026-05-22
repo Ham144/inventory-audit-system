@@ -21,7 +21,7 @@ export async function connectDB() {
     // Attempt a simple query to verify connection through the pool
     await pool.query("SELECT 1");
     console.log("🟢 PostgreSQL database connected successfully via Prisma (pg-adapter)!");
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("🔴 PostgreSQL connection failure:", error);
     // Keep running in development even if DB is not connected to let developers work
     if (process.env.NODE_ENV === "production") {
