@@ -1,4 +1,4 @@
-import { PrismaClient } from "../generated/prisma/index.js";
+import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 
@@ -13,14 +13,19 @@ const adapter = new PrismaPg(pool);
 
 const prisma = new PrismaClient({
   adapter,
-  log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+  log:
+    process.env.NODE_ENV === "development"
+      ? ["query", "error", "warn"]
+      : ["error"],
 });
 
 export async function connectDB() {
   try {
     // Attempt a simple query to verify connection through the pool
     await pool.query("SELECT 1");
-    console.log("🟢 PostgreSQL database connected successfully via Prisma (pg-adapter)!");
+    console.log(
+      "🟢 PostgreSQL database connected successfully via Prisma (pg-adapter)!",
+    );
   } catch (error: unknown) {
     console.error("🔴 PostgreSQL connection failure:", error);
     // Keep running in development even if DB is not connected to let developers work
@@ -30,5 +35,5 @@ export async function connectDB() {
   }
 }
 
-export { prisma };
+export { prisma, pool };
 export default prisma;

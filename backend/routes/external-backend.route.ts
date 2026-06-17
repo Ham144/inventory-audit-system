@@ -1,26 +1,77 @@
 import express from "express";
+import type { IncomingHttpHeaders } from "http";
 import axios, { AxiosError } from "axios";
 
 const router = express.Router();
+
+const STRIP_REQUEST_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "accept-encoding",
+]);
+
+function buildForwardHeaders(
+  req: express.Request,
+  hasJsonBody: boolean,
+): IncomingHttpHeaders {
+  const headers: IncomingHttpHeaders = {};
+
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (STRIP_REQUEST_HEADERS.has(key.toLowerCase())) continue;
+    if (value === undefined) continue;
+    headers[key] = value;
+  }
+
+  if (hasJsonBody) {
+    headers["content-type"] = "application/json";
+  }
+
+  return headers;
+}
+
+function buildForwardBody(
+  req: express.Request,
+  path: string,
+): unknown {
+  const isLdapLogin =
+    req.method === "POST" && path.includes("/auth/login/ldap");
+
+  if (!isLdapLogin || !process.env.BYPASS_TURNSTILE_KEY) {
+    return req.body;
+  }
+
+  const baseBody =
+    typeof req.body === "object" && req.body !== null && !Array.isArray(req.body)
+      ? req.body
+      : {};
+
+  return {
+    ...baseBody,
+    BYPASS_TURNSTILE_KEY: process.env.BYPASS_TURNSTILE_KEY,
+  };
+}
 
 // Forward semua request ke Source of Truth (SO)
 router.all(/.*/, async (req, res) => {
   try {
     const path = req.originalUrl.replace(/^\/so\/api/, "/api");
+    const forwardBody = buildForwardBody(req, path);
+    const hasJsonBody =
+      req.method !== "GET" &&
+      req.method !== "HEAD" &&
+      forwardBody !== undefined &&
+      forwardBody !== null;
 
-    // Kirim ke backend SO pakai axios
     const response = await axios({
       method: req.method,
       url: `${process.env.DATABASE_CENTER || "http://192.168.169.12:7047"}${path}`,
-      headers: {
-        ...req.headers,
-        host: undefined, // jangan kirim header host
-      },
-      data: req.body, // body ikut diteruskan
-      validateStatus: () => true, // biar status error tetap diteruskan
+      headers: buildForwardHeaders(req, hasJsonBody),
+      data: hasJsonBody ? forwardBody : undefined,
+      validateStatus: () => true,
     });
 
-    // Ambil token dari body level atas atau bersarang (jika dibungkus objek data)
     const refresh_token =
       response?.data?.refresh_token || response?.data?.data?.refresh_token;
     const access_token =
@@ -48,7 +99,7 @@ router.all(/.*/, async (req, res) => {
       if (typeof refresh_token === "string" && refresh_token.trim() !== "") {
         res.cookie("refresh_token", refresh_token, {
           httpOnly: true,
-          secure: isProd,
+          secure: false,
           path: "/",
           maxAge: 7 * 24 * 60 * 60 * 1000,
         });
@@ -56,7 +107,7 @@ router.all(/.*/, async (req, res) => {
       if (typeof access_token === "string" && access_token.trim() !== "") {
         res.cookie("access_token", access_token, {
           httpOnly: true,
-          secure: isProd,
+          secure: false,
           path: "/",
           maxAge: 5 * 60 * 1000,
         });

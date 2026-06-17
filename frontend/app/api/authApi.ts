@@ -9,7 +9,10 @@ export const loginLdap = async (body: any) => {
       _id: "688828ded953f48ff0fa7cba",
     },
   };
-  const response = await axiosInstance.post(`/so/api/auth/login/ldap`, finalBody);
+  const response = await axiosInstance.post(
+    `/so/api/auth/login/ldap`,
+    finalBody,
+  );
   return response; // ✅ Return full response
 };
 
@@ -21,7 +24,10 @@ export const loginApp = async (body: any) => {
       _id: "688828ded953f48ff0fa7cba",
     },
   };
-  const response = await axiosInstance.post(`/so/api/auth/login/app`, finalBody);
+  const response = await axiosInstance.post(
+    `/so/api/auth/login/app`,
+    finalBody,
+  );
   return response; // ✅ Return full response
 };
 
@@ -41,6 +47,7 @@ export const createAppUser = async (body: any) => {
 export const getUserInfo = async () => {
   try {
     const response = await axiosInstance.get(`/so/api/auth/getUserInfo`);
+    console.log(response.status);
     return response?.data;
   } catch (error: any) {
     // Jangan log error jika 401 karena itu normal saat user belum login
@@ -155,7 +162,13 @@ export const verify2Fa = async ({ otp }: { otp: string }) => {
   return response.data;
 };
 
-export const complete2faLogin = async ({ otp, pendingToken }: { otp: string; pendingToken: string }) => {
+export const complete2faLogin = async ({
+  otp,
+  pendingToken,
+}: {
+  otp: string;
+  pendingToken: string;
+}) => {
   const response = await axiosInstance.post("/so/api/auth/2fa/login-complete", {
     otp,
     pendingToken,
@@ -163,7 +176,13 @@ export const complete2faLogin = async ({ otp, pendingToken }: { otp: string; pen
   return response.data;
 };
 
-export const completeWhatsappOTPLogin = async ({ otp, pendingToken }: { otp: string; pendingToken: string }) => {
+export const completeWhatsappOTPLogin = async ({
+  otp,
+  pendingToken,
+}: {
+  otp: string;
+  pendingToken: string;
+}) => {
   const response = await axiosInstance.post(
     "/so/api/auth/whatsapp-otp/login-complete",
     {

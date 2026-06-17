@@ -9,12 +9,7 @@ import authenticate from "./middlewares/authenticate.middleware.js";
 
 import { connectDB } from "./config/db.js";
 
-const isProduction = process.env.NODE_ENV === "production";
-
-const corsOrigin = isProduction
-  ? [process.env.FRONT_END || ""]
-  : ["http://192.168.169.12:5173"];
-
+const corsOrigin = process.env.FRONT_END;
 const app = express();
 
 // Middlewares
@@ -45,6 +40,7 @@ app.use("/so/api", externalBackendRouter);
 app.use("/api/compare", compareRouter);
 
 const port = process.env.PORT || 5000;
+
 app.listen(port, () => {
   console.log("\n" + "=".repeat(50));
   console.log(`🚀 STOK OPNAME BACKEND IS ALIVE!`);

@@ -7,6 +7,32 @@ const databaseCenter = () => process.env.DATABASE_CENTER ?? "http://192.168.169.
 function errorMessage(error) {
     return error instanceof Error ? error.message : "Unknown error";
 }
+async function fetchSystemStockQty(sku, locationCode, req) {
+    try {
+        const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock`, {
+            params: { No: sku, locationCode },
+            headers: { cookie: req.headers.cookie ?? "" },
+            validateStatus: () => true,
+        });
+        if (response.status >= 400) {
+            return null;
+        }
+        return resolveStockQty(response.data);
+    }
+    catch {
+        return null;
+    }
+}
+function resolvePhysicalQtyFromScans(scans, systemQty) {
+    if (systemQty === null) {
+        return { physicalQty: 0, status: "BELUM_COMPARE" };
+    }
+    const matchingScan = scans.find((s) => s.qty === systemQty);
+    if (matchingScan) {
+        return { physicalQty: matchingScan.qty, status: "SESUAI" };
+    }
+    return { physicalQty: 0, status: "SELISIH" };
+}
 async function fetchCatalogProducts() {
     const response = await axios.get(`${databaseCenter()}/api/v1/product/list?limit=50`);
     return parseCatalogList(response.data);
@@ -97,7 +123,7 @@ router.post("/session/create", async (req, res) => {
 // 3. POST scan log (adds a scan)
 router.post("/scan", async (req, res) => {
     try {
-        const { sku, name, rak, qty, operator, locationCode } = req.body;
+        const { sku, name, rak, qty, locationCode } = req.body;
         const loc = locationCode || "01";
         const session = await getOrCreateActiveSession(loc);
         const scan = await prisma.scanLog.create({
@@ -106,21 +132,21 @@ router.post("/scan", async (req, res) => {
                 name: name ?? "",
                 rak: Number(rak) || 1,
                 qty: Number(qty) || 0,
-                operator: operator || "Admin Lapangan",
+                operator: req.user.username,
                 locationCode: loc,
                 sessionId: session.id,
             },
         });
-        const totalPhysical = await prisma.scanLog.aggregate({
+        const scans = await prisma.scanLog.findMany({
             where: {
                 sessionId: session.id,
                 sku,
             },
-            _sum: {
-                qty: true,
-            },
+            orderBy: { createdAt: "desc" },
+            select: { qty: true, createdAt: true },
         });
-        const sumQty = totalPhysical._sum.qty || 0;
+        const systemQty = await fetchSystemStockQty(sku, loc, req);
+        const { physicalQty, status } = resolvePhysicalQtyFromScans(scans, systemQty);
         const compareItem = await prisma.compareItem.upsert({
             where: {
                 sessionId_sku: {
@@ -129,15 +155,17 @@ router.post("/scan", async (req, res) => {
                 },
             },
             update: {
-                physicalQty: sumQty,
-                status: "BELUM_COMPARE",
+                physicalQty,
+                systemQty: systemQty ?? 0,
+                status,
+                updatedAt: new Date(),
             },
             create: {
                 sku,
                 name: name ?? "",
-                physicalQty: sumQty,
-                systemQty: 0,
-                status: "BELUM_COMPARE",
+                physicalQty,
+                systemQty: systemQty ?? 0,
+                status,
                 sessionId: session.id,
             },
         });
@@ -250,9 +278,13 @@ router.post("/reset", async (req, res) => {
 router.get("/scans", async (req, res) => {
     try {
         const locationCode = req.query.locationCode || "01";
+        const rak = req.query.rak || "Semua";
         const whereClause = await sessionScopeWhere(locationCode);
         const scans = await prisma.scanLog.findMany({
-            where: whereClause,
+            where: {
+                ...whereClause,
+                ...(rak !== "Semua" ? { rak: Number(rak) } : {}),
+            },
             orderBy: { createdAt: "desc" },
         });
         return res.json(scans);

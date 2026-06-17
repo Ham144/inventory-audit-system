@@ -6,6 +6,10 @@ type SessionScopeWhere =
   | { sessionId: string }
   | { sessionId: { in: string[] } };
 import {
+  tryAutoApproveUnanimousGroup,
+  deleteScanQtyApprovals,
+} from "../utils/scan-approval.js";
+import {
   parseCatalogList,
   resolveStockQty,
   toCompareItemSeed,
@@ -19,45 +23,6 @@ const databaseCenter = () =>
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
-}
-
-async function fetchSystemStockQty(
-  sku: string,
-  locationCode: string,
-  req: Request,
-): Promise<number | null> {
-  try {
-    const response = await axios.get<StockResponse>(
-      `${databaseCenter()}/api/v1/product/getStock`,
-      {
-        params: { No: sku, locationCode },
-        headers: { cookie: req.headers.cookie ?? "" },
-        validateStatus: () => true,
-      },
-    );
-    if (response.status >= 400) {
-      return null;
-    }
-    return resolveStockQty(response.data);
-  } catch {
-    return null;
-  }
-}
-
-function resolvePhysicalQtyFromScans(
-  scans: { qty: number; createdAt: Date }[],
-  systemQty: number | null,
-): { physicalQty: number; status: string } {
-  if (systemQty === null) {
-    return { physicalQty: 0, status: "BELUM_COMPARE" };
-  }
-
-  const matchingScan = scans.find((s) => s.qty === systemQty);
-  if (matchingScan) {
-    return { physicalQty: matchingScan.qty, status: "SESUAI" };
-  }
-
-  return { physicalQty: 0, status: "SELISIH" };
 }
 
 async function fetchCatalogProducts() {
@@ -114,7 +79,7 @@ async function sessionScopeWhere(
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
     });
-    const sessionIds = activeSessions.map((s) => s.id);
+    const sessionIds = activeSessions.map((s: any) => s.id);
     return { sessionId: { in: sessionIds } };
   }
 
@@ -194,45 +159,36 @@ router.post("/scan", async (req: any, res: Response) => {
       },
     });
 
-    const scans = await prisma.scanLog.findMany({
-      where: {
-        sessionId: session.id,
-        sku,
-      },
-      orderBy: { createdAt: "desc" },
-      select: { qty: true, createdAt: true },
-    });
-
-    const systemQty = await fetchSystemStockQty(sku, loc, req);
-    const { physicalQty, status } = resolvePhysicalQtyFromScans(
-      scans,
-      systemQty,
-    );
-
-    const compareItem = await prisma.compareItem.upsert({
+    await prisma.compareItem.upsert({
       where: {
         sessionId_sku: {
           sessionId: session.id,
           sku,
         },
       },
-      update: {
-        physicalQty,
-        systemQty: systemQty ?? 0,
-        status,
-        updatedAt: new Date(),
-      },
+      update: {},
       create: {
         sku,
         name: name ?? "",
-        physicalQty,
-        systemQty: systemQty ?? 0,
-        status,
+        physicalQty: 0,
+        systemQty: 0,
+        status: "BELUM_COMPARE",
         sessionId: session.id,
       },
     });
 
-    return res.json({ scan, compareItem });
+    const groupScans = await prisma.scanLog.findMany({
+      where: {
+        sessionId: session.id,
+        sku,
+        rak: scan.rak,
+        locationCode: loc,
+      },
+    });
+
+    await tryAutoApproveUnanimousGroup(groupScans);
+
+    return res.json({ scan });
   } catch (error: unknown) {
     console.error("Scan API Error:", errorMessage(error));
     return res.status(500).json({ error: errorMessage(error) });
@@ -322,6 +278,8 @@ router.post("/reset", async (req: Request, res: Response) => {
       });
 
       for (const session of activeSessions) {
+        await deleteScanQtyApprovals({ sessionId: session.id });
+
         await prisma.scanLog.deleteMany({
           where: { sessionId: session.id },
         });
@@ -339,6 +297,8 @@ router.post("/reset", async (req: Request, res: Response) => {
     }
 
     const session = await getOrCreateActiveSession(locationCode);
+
+    await deleteScanQtyApprovals({ sessionId: session.id });
 
     await prisma.scanLog.deleteMany({
       where: { sessionId: session.id },

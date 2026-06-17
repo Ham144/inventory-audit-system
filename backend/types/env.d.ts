@@ -5,5 +5,6 @@ declare namespace NodeJS {
     DATABASE_URL?: string;
     DATABASE_CENTER?: string;
     FRONT_END?: string;
+    BYPASS_TURNSTILE_KEY?: string;
   }
 }

@@ -22,6 +22,10 @@ type ScanCompareRow = {
   rak: number;
   locationCode: string;
   match: boolean;
+  resolved: boolean;
+  approvedQty: number | null;
+  approvedScanId: string | null;
+  approvedBy: string | null;
   scans: unknown[];
 };
 

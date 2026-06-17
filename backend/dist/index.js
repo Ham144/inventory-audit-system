@@ -4,6 +4,8 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import externalBackendRouter from "./routes/external-backend.route.js";
 import opnameRouter, { startOpnameCron } from "./routes/opname.route.js";
+import compareRouter from "./routes/compare.router.js";
+import authenticate from "./middlewares/authenticate.middleware.js";
 import { connectDB } from "./config/db.js";
 const isProduction = process.env.NODE_ENV === "production";
 const corsOrigin = isProduction
@@ -27,8 +29,10 @@ app.get("/", async (_req, res) => {
 // ==========================================
 // API Routes (Uncomment as they are developed)
 // ==========================================
-app.use("/so/api/opname", opnameRouter);
+app.use(authenticate);
+app.use("/api/opname", opnameRouter);
 app.use("/so/api", externalBackendRouter);
+app.use("/api/compare", compareRouter);
 const port = process.env.PORT || 5000;
 app.listen(port, () => {
     console.log("\n" + "=".repeat(50));

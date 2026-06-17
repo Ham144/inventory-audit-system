@@ -12,6 +12,10 @@ export type ScanCompareRow = {
   rak: number;
   locationCode: string;
   match: boolean;
+  resolved: boolean;
+  approvedQty: number | null;
+  approvedScanId: string | null;
+  approvedBy: string | null;
   scans: {
     id: string;
     qty: number;
@@ -29,6 +33,8 @@ export type NavCompareRow = {
   status: string;
   locationCode: string;
   updatedAt: string;
+  resolvedRakCount: number;
+  pendingRakCount: number;
 };
 
 function toCompareParams(params: CompareQueryParams) {
@@ -50,12 +56,27 @@ export const CompareApi = {
     return response.data;
   },
 
+  approveScanQty: async (scanLogId: string): Promise<ScanCompareRow | null> => {
+    const response = await axiosInstance.post<ScanCompareRow | null>(
+      "/api/compare/scan/approve",
+      { scanLogId },
+    );
+    return response.data;
+  },
+
   fetchNavCompareList: async (
     params: CompareQueryParams,
   ): Promise<NavCompareRow[]> => {
     const response = await axiosInstance.get<NavCompareRow[]>(
       "/api/compare/nav",
       { params: toCompareParams(params) },
+    );
+    return response.data;
+  },
+
+  checkNavItem: async (compareItemId: string): Promise<NavCompareRow> => {
+    const response = await axiosInstance.post<NavCompareRow>(
+      `/api/compare/nav/${compareItemId}/check`,
     );
     return response.data;
   },

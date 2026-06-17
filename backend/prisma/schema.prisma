@@ -3,7 +3,6 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -11,14 +10,15 @@ datasource db {
 }
 
 model OpnameSession {
-  id           String        @id @default(uuid())
-  name         String // Nama sesi opname (misal: "Opname Mei 2026")
-  locationCode String
-  status       String        @default("ONGOING") // ONGOING, COMPLETED
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  scans        ScanLog[]
-  compareItems CompareItem[]
+  id               String             @id @default(uuid())
+  name             String // Nama sesi opname (misal: "Opname Mei 2026")
+  locationCode     String
+  status           String             @default("ONGOING") // ONGOING, COMPLETED
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  scans            ScanLog[]
+  compareItems     CompareItem[]  
+  scanQtyApprovals ScanQtyApproval[]
 }
 
 model ScanLog {
@@ -34,7 +34,27 @@ model ScanLog {
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  approval ScanQtyApproval?
+
   @@index([sku])
+  @@index([sessionId])
+}
+
+model ScanQtyApproval {
+  id           String   @id @default(uuid())
+  sku          String
+  rak          Int
+  locationCode String
+  scanLogId    String   @unique
+  approvedQty  Int
+  approvedBy   String
+  approvedAt   DateTime @default(now())
+
+  sessionId String
+  session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  scanLog   ScanLog       @relation(fields: [scanLogId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sku, rak, locationCode])
   @@index([sessionId])
 }
 
