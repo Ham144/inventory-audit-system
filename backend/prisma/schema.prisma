@@ -12,7 +12,7 @@ datasource db {
 model OpnameSession {
   id               String             @id @default(uuid())
   name             String // Nama sesi opname (misal: "Opname Mei 2026")
-  locationCode     String
+  office     String
   status           String             @default("ONGOING") // ONGOING, COMPLETED
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -29,7 +29,7 @@ model ScanLog {
   qty          Int // Jumlah fisik hasil scan
   operator     String // Username petugas lapangan
   createdAt    DateTime @default(now())
-  locationCode String // Wilayah / Lokasi gudang
+  office String // Wilayah / Lokasi gudang
 
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -44,7 +44,7 @@ model ScanQtyApproval {
   id           String   @id @default(uuid())
   sku          String
   rak          Int
-  locationCode String
+  office String
   scanLogId    String   @unique
   approvedQty  Int
   approvedBy   String
@@ -54,7 +54,7 @@ model ScanQtyApproval {
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   scanLog   ScanLog       @relation(fields: [scanLogId], references: [id], onDelete: Cascade)
 
-  @@unique([sessionId, sku, rak, locationCode])
+  @@unique([sessionId, sku, rak, office])
   @@index([sessionId])
 }
 
@@ -72,4 +72,12 @@ model CompareItem {
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, sku])
+}
+
+model User {
+  username  String   @id
+  role      String? @default("operator") // operator, admin, owner
+  office    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

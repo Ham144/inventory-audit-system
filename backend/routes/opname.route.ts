@@ -6,17 +6,122 @@ type SessionScopeWhere =
   | { sessionId: string }
   | { sessionId: { in: string[] } };
 import {
-  tryAutoApproveUnanimousGroup,
+  reconcileApprovalAfterGroupChange,
   deleteScanQtyApprovals,
+  toScanGroups,
+  readOffice,
 } from "../utils/scan-approval.js";
+import {
+  assertScanAccess,
+  isOwner,
+  resolveAppUser,
+  resolveOfficeFilter,
+} from "../utils/app-user.js";
+import {
+  listUsers,
+  syncUserProfile,
+  updateUserRole,
+} from "../utils/user-store.js";
 import {
   parseCatalogList,
   resolveStockQty,
   toCompareItemSeed,
   type StockResponse,
 } from "../types/catalog.js";
+import {
+  filterHiddenProducts,
+  isHiddenProductSku,
+} from "../utils/product-filter.js";
 
 const router = express.Router();
+
+router.get("/me", async (req: any, res: Response) => {
+  try {
+    const user = await resolveAppUser(req);
+    if (!user) {
+      return res.status(404).json({ message: "User tidak ditemukan" });
+    }
+    return res.json(user);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.post("/me/sync", async (req: any, res: Response) => {
+  try {
+    const username = req.user?.username as string | undefined;
+    if (!username?.trim()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const { office, description } = req.body as {
+      office?: string | null;
+      description?: string | null;
+    };
+
+    const user = await syncUserProfile({
+      username: username.trim(),
+      office: office?.trim() || null,
+      description: description?.trim() || null,
+    });
+
+    return res.json(user);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.get("/users", async (req: any, res: Response) => {
+  try {
+    const appUser = await resolveAppUser(req);
+    if (!isOwner(appUser)) {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    const users = await listUsers();
+    return res.json(users);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.patch("/users/:username/role", async (req: any, res: Response) => {
+  try {
+    const appUser = await resolveAppUser(req);
+    if (!isOwner(appUser)) {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    const targetUsername = (req.params.username as string)?.trim();
+    if (!targetUsername) {
+      return res.status(400).json({ message: "Username wajib diisi" });
+    }
+
+    if (targetUsername === appUser?.username) {
+      return res
+        .status(403)
+        .json({ message: "Tidak dapat mengubah role sendiri" });
+    }
+
+    const { role } = req.body as { role?: string };
+    if (!role?.trim()) {
+      return res.status(400).json({ message: "Role wajib diisi" });
+    }
+
+    const updated = await updateUserRole(targetUsername, role);
+    if (!updated) {
+      return res.status(404).json({ message: "User tidak ditemukan" });
+    }
+
+    return res.json(updated);
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    if (message === "Role tidak valid") {
+      return res.status(400).json({ message });
+    }
+    return res.status(500).json({ error: message });
+  }
+});
 
 const databaseCenter = () =>
   process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
@@ -29,7 +134,7 @@ async function fetchCatalogProducts() {
   const response = await axios.get(
     `${databaseCenter()}/api/v1/product/list?limit=50`,
   );
-  return parseCatalogList(response.data);
+  return filterHiddenProducts(parseCatalogList(response.data));
 }
 
 async function seedSessionCatalog(sessionId: string) {
@@ -49,21 +154,21 @@ async function seedSessionCatalog(sessionId: string) {
   }
 }
 
-async function getOrCreateActiveSession(locationCode: string) {
+async function getOrCreateActiveSession(office: string) {
   let session = await prisma.opnameSession.findFirst({
     where: {
-      locationCode,
+      office,
       status: "ONGOING",
-    },
+    } as never,
   });
 
   if (!session) {
     session = await prisma.opnameSession.create({
       data: {
-        name: `Sesi Opname - Lokasi ${locationCode}`,
-        locationCode,
+        name: `Sesi Opname - Lokasi ${office}`,
+        office,
         status: "ONGOING",
-      },
+      } as never,
     });
 
     await seedSessionCatalog(session.id);
@@ -72,10 +177,8 @@ async function getOrCreateActiveSession(locationCode: string) {
   return session;
 }
 
-async function sessionScopeWhere(
-  locationCode: string,
-): Promise<SessionScopeWhere> {
-  if (locationCode === "Semua") {
+async function sessionScopeWhere(office: string): Promise<SessionScopeWhere> {
+  if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
     });
@@ -83,15 +186,15 @@ async function sessionScopeWhere(
     return { sessionId: { in: sessionIds } };
   }
 
-  const session = await getOrCreateActiveSession(locationCode);
+  const session = await getOrCreateActiveSession(office);
   return { sessionId: session.id };
 }
 
 // 1. GET active session
 router.get("/session/active", async (req: Request, res: Response) => {
   try {
-    const locationCode = (req.query.locationCode as string) || "01";
-    const session = await getOrCreateActiveSession(locationCode);
+    const office = (req.query.office as string) || "01";
+    const session = await getOrCreateActiveSession(office);
     return res.json(session);
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
@@ -101,15 +204,15 @@ router.get("/session/active", async (req: Request, res: Response) => {
 // 2. POST create new session (closes ongoing one)
 router.post("/session/create", async (req: Request, res: Response) => {
   try {
-    const { name, locationCode } = req.body as {
+    const { name, office } = req.body as {
       name?: string;
-      locationCode?: string;
+      office?: string;
     };
-    const loc = locationCode || "01";
+    const loc = office || "01";
 
     await prisma.opnameSession.updateMany({
       where: {
-        locationCode: loc,
+        office: loc,
         status: "ONGOING",
       },
       data: {
@@ -120,9 +223,9 @@ router.post("/session/create", async (req: Request, res: Response) => {
     const session = await prisma.opnameSession.create({
       data: {
         name: name || `Opname Sesi - ${new Date().toLocaleDateString("id-ID")}`,
-        locationCode: loc,
+        office: loc,
         status: "ONGOING",
-      },
+      } as never,
     });
 
     await seedSessionCatalog(session.id);
@@ -136,28 +239,61 @@ router.post("/session/create", async (req: Request, res: Response) => {
 // 3. POST scan log (adds a scan)
 router.post("/scan", async (req: any, res: Response) => {
   try {
-    const { sku, name, rak, qty, locationCode } = req.body as {
+    const appUser = await resolveAppUser(req);
+    const { sku, name, rak, qty, office } = req.body as {
       sku: string;
       name?: string;
       rak?: number | string;
       qty?: number | string;
-      locationCode?: string;
+      office?: string;
     };
-    const loc = locationCode || "01";
+    const access = assertScanAccess(appUser, office);
+    if (!access.ok) {
+      return res.status(access.status).json({ message: access.message });
+    }
+
+    if (isHiddenProductSku(sku)) {
+      return res.status(400).json({ message: "SKU tidak tersedia untuk opname" });
+    }
+
+    const loc = access.office;
 
     const session = await getOrCreateActiveSession(loc);
+    const operator = req.user.username as string;
+    const rakNum = Number(rak) || 1;
+    const qtyNum = Number(qty) || 0;
 
-    const scan = await prisma.scanLog.create({
-      data: {
-        sku,
-        name: name ?? "",
-        rak: Number(rak) || 1,
-        qty: Number(qty) || 0,
-        operator: req.user.username as string,
-        locationCode: loc,
+    const existing = await prisma.scanLog.findFirst({
+      where: {
         sessionId: session.id,
-      },
+        sku,
+        rak: rakNum,
+        office: loc,
+        operator,
+      } as never,
     });
+
+    const previousQty = existing?.qty ?? 0;
+
+    const scan = existing
+      ? await prisma.scanLog.update({
+          where: { id: existing.id },
+          data: {
+            qty: existing.qty + qtyNum,
+            name: name ?? existing.name,
+          },
+        })
+      : await prisma.scanLog.create({
+          data: {
+            sku,
+            name: name ?? "",
+            rak: rakNum,
+            qty: qtyNum,
+            operator,
+            office: loc,
+            sessionId: session.id,
+          } as never,
+        });
 
     await prisma.compareItem.upsert({
       where: {
@@ -182,13 +318,17 @@ router.post("/scan", async (req: any, res: Response) => {
         sessionId: session.id,
         sku,
         rak: scan.rak,
-        locationCode: loc,
+        office: loc,
       },
     });
 
-    await tryAutoApproveUnanimousGroup(groupScans);
+    await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
 
-    return res.json({ scan });
+    return res.json({
+      scan,
+      isUpdate: Boolean(existing),
+      previousQty,
+    });
   } catch (error: unknown) {
     console.error("Scan API Error:", errorMessage(error));
     return res.status(500).json({ error: errorMessage(error) });
@@ -198,8 +338,8 @@ router.post("/scan", async (req: any, res: Response) => {
 // 4. GET comparison items
 router.get("/comparison", async (req: Request, res: Response) => {
   try {
-    const locationCode = (req.query.locationCode as string) || "01";
-    const whereClause = await sessionScopeWhere(locationCode);
+    const office = (req.query.office as string) || "01";
+    const whereClause = await sessionScopeWhere(office);
 
     const items = await prisma.compareItem.findMany({
       where: whereClause,
@@ -208,7 +348,9 @@ router.get("/comparison", async (req: Request, res: Response) => {
       },
     });
 
-    return res.json(items);
+    return res.json(
+      items.filter((item) => !isHiddenProductSku(item.sku)),
+    );
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }
@@ -217,9 +359,8 @@ router.get("/comparison", async (req: Request, res: Response) => {
 // 5. POST sync manual
 router.post("/sync", async (req: Request, res: Response) => {
   try {
-    const locationCode =
-      (req.body as { locationCode?: string }).locationCode || "01";
-    const whereClause = await sessionScopeWhere(locationCode);
+    const office = (req.body as { office?: string }).office || "01";
+    const whereClause = await sessionScopeWhere(office);
 
     const items = await prisma.compareItem.findMany({
       where: whereClause,
@@ -228,13 +369,16 @@ router.post("/sync", async (req: Request, res: Response) => {
     const updatedItems = [];
 
     for (const item of items) {
+      if (isHiddenProductSku(item.sku)) {
+        continue;
+      }
       try {
-        let loc = locationCode;
-        if (locationCode === "Semua") {
+        let loc = office;
+        if (office === "Semua") {
           const itemSession = await prisma.opnameSession.findUnique({
             where: { id: item.sessionId },
           });
-          loc = itemSession?.locationCode || "01";
+          loc = readOffice(itemSession ?? {});
         }
 
         const response = await axios.get<StockResponse>(
@@ -269,10 +413,9 @@ router.post("/sync", async (req: Request, res: Response) => {
 // 6. POST reset active session
 router.post("/reset", async (req: Request, res: Response) => {
   try {
-    const locationCode =
-      (req.body as { locationCode?: string }).locationCode || "01";
+    const office = (req.body as { office?: string }).office || "01";
 
-    if (locationCode === "Semua") {
+    if (office === "Semua") {
       const activeSessions = await prisma.opnameSession.findMany({
         where: { status: "ONGOING" },
       });
@@ -287,16 +430,14 @@ router.post("/reset", async (req: Request, res: Response) => {
         await prisma.compareItem.deleteMany({
           where: { sessionId: session.id },
         });
-
-        await seedSessionCatalog(session.id);
       }
       return res.json({
         success: true,
-        message: "Seluruh wilayah berhasil direset ke status awal.",
+        message: "Semua scan, approval, dan compare dihapus.",
       });
     }
 
-    const session = await getOrCreateActiveSession(locationCode);
+    const session = await getOrCreateActiveSession(office);
 
     await deleteScanQtyApprovals({ sessionId: session.id });
 
@@ -308,11 +449,9 @@ router.post("/reset", async (req: Request, res: Response) => {
       where: { sessionId: session.id },
     });
 
-    await seedSessionCatalog(session.id);
-
     return res.json({
       success: true,
-      message: "State berhasil direset ke status awal. Scan lokal dibersihkan.",
+      message: "Scan, approval, dan compare untuk wilayah ini dihapus.",
     });
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
@@ -320,11 +459,15 @@ router.post("/reset", async (req: Request, res: Response) => {
 });
 
 // 7. GET active scans
-router.get("/scans", async (req: Request, res: Response) => {
+router.get("/scans", async (req: any, res: Response) => {
   try {
-    const locationCode = (req.query.locationCode as string) || "01";
+    const appUser = await resolveAppUser(req);
+    const office = resolveOfficeFilter(
+      appUser,
+      (req.query.office as string) || undefined,
+    );
     const rak = (req.query.rak as string) || "Semua";
-    const whereClause = await sessionScopeWhere(locationCode);
+    const whereClause = await sessionScopeWhere(office);
 
     const scans = await prisma.scanLog.findMany({
       where: {
@@ -334,7 +477,9 @@ router.get("/scans", async (req: Request, res: Response) => {
       orderBy: { createdAt: "desc" },
     });
 
-    return res.json(scans);
+    return res.json(
+      scans.filter((scan) => !isHiddenProductSku(scan.sku)),
+    );
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }
@@ -358,9 +503,12 @@ export function startOpnameCron() {
         });
 
         for (const item of items) {
+          if (isHiddenProductSku(item.sku)) {
+            continue;
+          }
           try {
             const response = await axios.get<StockResponse>(
-              `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${session.locationCode}`,
+              `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${readOffice(session)}`,
             );
 
             const realQty = resolveStockQty(response.data);

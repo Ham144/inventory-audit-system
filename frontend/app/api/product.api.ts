@@ -1,4 +1,5 @@
 import axiosInstance from "./axios-instance";
+import { filterProductListResponse } from "~/libs/product-filter";
 
 const ProductApi = {
   searchProducts: async (query?: string, page = 1, limit = 50) => {
@@ -10,7 +11,7 @@ const ProductApi = {
     const res = await axiosInstance.get(
       `/so/api/v1/product/list?${params.toString()}`,
     );
-    return res.data;
+    return filterProductListResponse(res.data);
   },
 };
 

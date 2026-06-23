@@ -1,12 +1,16 @@
+import { isHiddenProductSku } from "./product-filter.js";
 export function parseCompareQueryFilters(query) {
     return {
-        locationCode: query.locationCode || "Semua",
+        office: query.office || "Semua",
         rak: query.rak || "Semua",
         search: (query.search || "").trim(),
     };
 }
 export function filterScanCompareRows(rows, filters) {
     return rows.filter((item) => {
+        if (isHiddenProductSku(item.sku)) {
+            return false;
+        }
         if (filters.rak !== "Semua" && String(item.rak) !== filters.rak) {
             return false;
         }
@@ -22,6 +26,9 @@ export function filterScanCompareRows(rows, filters) {
 }
 export function filterNavCompareRows(rows, filters, skusWithRak) {
     return rows.filter((item) => {
+        if (isHiddenProductSku(item.sku)) {
+            return false;
+        }
         if (filters.rak !== "Semua" && !skusWithRak.has(item.sku)) {
             return false;
         }

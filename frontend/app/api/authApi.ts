@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import axiosInstance from "./axios-instance";
 
 //login LDAP
@@ -47,14 +48,12 @@ export const createAppUser = async (body: any) => {
 export const getUserInfo = async () => {
   try {
     const response = await axiosInstance.get(`/so/api/auth/getUserInfo`);
-    console.log(response.status);
     return response?.data;
   } catch (error: any) {
-    // Jangan log error jika 401 karena itu normal saat user belum login
     if (error.response?.status !== 401) {
-      console.log("getUserInfo error:", error);
+      toast.error(JSON.stringify(error));
     }
-    return null; // Return null instead of false untuk konsistensi
+    return null;
   }
 };
 

@@ -1,16 +1,18 @@
+import { isHiddenProductSku } from "./product-filter.js";
+
 export type CompareQueryFilters = {
-  locationCode: string;
+  office: string;
   rak: string;
   search: string;
 };
 
 export function parseCompareQueryFilters(query: {
-  locationCode?: string;
+  office?: string;
   rak?: string;
   search?: string;
 }): CompareQueryFilters {
   return {
-    locationCode: query.locationCode || "Semua",
+    office: query.office || "Semua",
     rak: query.rak || "Semua",
     search: (query.search || "").trim(),
   };
@@ -20,7 +22,7 @@ type ScanCompareRow = {
   sku: string;
   name: string;
   rak: number;
-  locationCode: string;
+  office: string;
   match: boolean;
   resolved: boolean;
   approvedQty: number | null;
@@ -34,6 +36,9 @@ export function filterScanCompareRows<T extends ScanCompareRow>(
   filters: CompareQueryFilters,
 ): T[] {
   return rows.filter((item) => {
+    if (isHiddenProductSku(item.sku)) {
+      return false;
+    }
     if (filters.rak !== "Semua" && String(item.rak) !== filters.rak) {
       return false;
     }
@@ -47,14 +52,15 @@ export function filterScanCompareRows<T extends ScanCompareRow>(
   });
 }
 
-export function filterNavCompareRows<
-  T extends { sku: string; name: string },
->(
+export function filterNavCompareRows<T extends { sku: string; name: string }>(
   rows: T[],
   filters: CompareQueryFilters,
   skusWithRak: Set<string>,
 ): T[] {
   return rows.filter((item) => {
+    if (isHiddenProductSku(item.sku)) {
+      return false;
+    }
     if (filters.rak !== "Semua" && !skusWithRak.has(item.sku)) {
       return false;
     }

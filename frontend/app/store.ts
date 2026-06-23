@@ -6,6 +6,7 @@ export interface UserInfo {
   displayName?: string;
   email?: string | null;
   location?: string | null;
+  office?: string | null;
   role?: string;
   description?: string;
   authMethod?: string;

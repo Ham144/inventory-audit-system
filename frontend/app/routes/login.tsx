@@ -11,12 +11,16 @@ import {
   Building,
 } from "lucide-react";
 import { loginLdap, loginApp } from "../api/authApi";
+import { syncAppUser, getAppUser } from "../api/opnameUserApi";
+import { parseAuthProfile } from "../libs/auth-profile";
+import { useUserInfo } from "../store";
 
 export default function Login() {
   const navigate = useNavigate();
+  const setUserInfo = useUserInfo((state) => state.setUserInfo);
   const [loginType, setLoginType] = useState<"ldap" | "app">("ldap");
-  const [username, setUsername] = useState("yafizham");
-  const [password, setPassword] = useState("caturposv1!");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -43,7 +47,43 @@ export default function Login() {
         res &&
         (res.status === 200 || res.status === 201 || res.data?.success)
       ) {
-        navigate("/");
+        const profile = parseAuthProfile(res.data);
+        if (profile) {
+          try {
+            const synced = await syncAppUser({
+              office: profile.office,
+              description: profile.description,
+            });
+            setUserInfo({
+              username: profile.username,
+              office: synced.office ?? profile.office,
+              description: profile.description ?? undefined,
+              role: synced.role ?? undefined,
+            });
+          } catch {
+            const dataRole =
+              typeof res.data?.data === "object" && res.data.data !== null
+                ? (res.data.data as { role?: string }).role
+                : undefined;
+            try {
+              const appUser = await getAppUser();
+              setUserInfo({
+                username: profile.username,
+                office: appUser.office ?? profile.office,
+                description: profile.description ?? undefined,
+                role: appUser.role ?? dataRole,
+              });
+            } catch {
+              setUserInfo({
+                username: profile.username,
+                office: profile.office,
+                description: profile.description ?? undefined,
+                role: dataRole,
+              });
+            }
+          }
+        }
+        navigate("/input");
       } else {
         setErrorMsg(
           res?.data?.message || "Login gagal, silakan periksa kredensial Anda.",
@@ -106,18 +146,6 @@ export default function Login() {
             >
               <Building className="h-3.5 w-3.5" />
               LDAP Login
-            </button>
-            <button
-              type="button"
-              onClick={() => setLoginType("app")}
-              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
-                loginType === "app"
-                  ? "bg-white text-indigo-650 shadow-sm"
-                  : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <ShieldCheck className="h-3.5 w-3.5" />
-              App Account
             </button>
           </div>
 

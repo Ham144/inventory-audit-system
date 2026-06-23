@@ -44,6 +44,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 import { useEffect } from "react";
 import { useUserInfo } from "./store";
 import { getUserInfo } from "./api/authApi";
+import { syncAppUser, getAppUser } from "./api/opnameUserApi";
+import { parseAuthProfile } from "./libs/auth-profile";
+import { applyStoredTheme } from "./libs/app-prefs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const queryClient = new QueryClient();
@@ -52,16 +55,31 @@ export default function App() {
   const setUserInfo = useUserInfo((state) => state.setUserInfo);
 
   useEffect(() => {
+    applyStoredTheme();
+  }, []);
+
+  useEffect(() => {
     const fetchUser = async () => {
       try {
         const res = await getUserInfo();
-        const user = res?.data || res;
-        if (user) {
-          const actualUser = user.userInfo || user;
-          setUserInfo(actualUser);
-        }
-      } catch (err) {
-        console.error("Gagal memuat info user secara global:", err);
+        if (!res) return;
+
+        const profile = parseAuthProfile(res);
+        if (!profile) return;
+
+        const synced = await syncAppUser({
+          office: profile.office,
+          description: profile.description,
+        });
+
+        setUserInfo({
+          username: profile.username,
+          office: synced.office ?? profile.office,
+          description: profile.description ?? undefined,
+          role: synced.role ?? undefined,
+        });
+      } catch {
+        // user belum login atau sesi habis
       }
     };
     fetchUser();

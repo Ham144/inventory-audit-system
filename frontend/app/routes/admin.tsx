@@ -3,23 +3,33 @@ import {
   Search,
   CheckCircle2,
   AlertTriangle,
-  RefreshCw,
   SlidersHorizontal,
   Layers,
   Boxes,
   Database,
   Sparkles,
-  Clock,
   AlertCircle,
   UserCheck,
-  Undo2,
   Plus,
   MapPin,
+  ChevronDown,
+  ChevronRight,
+  RefreshCcw,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { Link, redirect } from "react-router";
 import axiosInstance from "../api/axios-instance";
 import locationApi from "../api/LocationApi";
 import { useUserInfo } from "../store";
+import {
+  canAccessAdmin,
+  compareOfficeScope,
+  isAdmin,
+  isOwner,
+  userSessionLabel,
+} from "~/libs/user-access";
+import { getAdminDefaultOffice } from "~/libs/app-prefs";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   CompareApi,
@@ -37,7 +47,7 @@ interface ScanLog {
   sku: string;
   name: string;
   qty?: number;
-  locationCode?: string;
+  office?: string;
   createdAt: string;
   operator: string;
 }
@@ -49,11 +59,35 @@ interface ProductCompare {
   physicalQty: number;
   systemQty: number;
   status: "sesuai" | "selisih" | "belum_compare" | "loading";
-  locationCode: string;
+  office: string;
   updatedAt: string;
   resolvedRakCount: number;
   pendingRakCount: number;
 }
+
+type NavStatusFilter =
+  | "all"
+  | "pending_rak"
+  | "selisih"
+  | "sesuai"
+  | "belum_compare";
+
+type SortBy = "default" | "name_asc" | "selisih_desc" | "pending_desc";
+
+const NAV_STATUS_FILTERS: { value: NavStatusFilter; label: string }[] = [
+  { value: "all", label: "Semua" },
+  { value: "pending_rak", label: "Pending Rak" },
+  { value: "selisih", label: "Selisih" },
+  { value: "sesuai", label: "Sesuai" },
+  { value: "belum_compare", label: "Belum Compare" },
+];
+
+const SORT_OPTIONS: { value: SortBy; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "name_asc", label: "Nama A-Z" },
+  { value: "selisih_desc", label: "Selisih terbesar" },
+  { value: "pending_desc", label: "Pending terbanyak" },
+];
 
 function normalizeNavStatus(status: string): ProductCompare["status"] {
   const s = status.toLowerCase();
@@ -71,39 +105,538 @@ function mapNavCompareItem(raw: NavCompareRow): ProductCompare {
     physicalQty: raw.physicalQty,
     systemQty: raw.systemQty,
     status: normalizeNavStatus(raw.status),
-    locationCode: raw.locationCode,
+    office: raw.office,
     updatedAt: raw.updatedAt,
     resolvedRakCount: raw.resolvedRakCount,
     pendingRakCount: raw.pendingRakCount,
   };
 }
 
+function skuLocationKey(sku: string, office: string) {
+  return `${sku}|${office}`;
+}
+
+function navDelta(nav: ProductCompare): number | null {
+  if (nav.status === "belum_compare") return null;
+  return nav.physicalQty - nav.systemQty;
+}
+
+function applyNavStatusFilter(
+  rows: ProductCompare[],
+  filter: NavStatusFilter,
+): ProductCompare[] {
+  if (filter === "all") return rows;
+  if (filter === "pending_rak") {
+    return rows.filter((r) => r.pendingRakCount > 0);
+  }
+  return rows.filter((r) => r.status === filter);
+}
+
+function sortNavRows(rows: ProductCompare[], sortBy: SortBy): ProductCompare[] {
+  const sorted = [...rows];
+  switch (sortBy) {
+    case "name_asc":
+      return sorted.sort((a, b) => a.name.localeCompare(b.name));
+    case "selisih_desc":
+      return sorted.sort((a, b) => {
+        const da = Math.abs(navDelta(a) ?? 0);
+        const db = Math.abs(navDelta(b) ?? 0);
+        return db - da;
+      });
+    case "pending_desc":
+      return sorted.sort((a, b) => b.pendingRakCount - a.pendingRakCount);
+    default:
+      return sorted;
+  }
+}
+
+function DeltaBadge({ delta }: { delta: number | null }) {
+  if (delta === null) {
+    return (
+      <span className="badge badge-ghost badge-sm font-bold text-slate-400">
+        —
+      </span>
+    );
+  }
+  if (delta === 0) {
+    return <span className="badge badge-success badge-sm font-bold">0</span>;
+  }
+  return (
+    <span className="badge badge-warning badge-sm font-bold">
+      {delta >= 0 ? "+" : ""}
+      {delta}
+    </span>
+  );
+}
+
+function RakProgressBadge({
+  resolved,
+  pending,
+}: {
+  resolved: number;
+  pending: number;
+}) {
+  const total = resolved + pending;
+  if (total === 0) {
+    return (
+      <span className="badge badge-ghost badge-sm font-bold text-slate-400">
+        —
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`badge badge-sm font-bold ${
+        pending > 0 ? "badge-warning" : "badge-success"
+      }`}
+    >
+      {resolved}/{total}
+    </span>
+  );
+}
+
+function NavTableSkeleton() {
+  return (
+    <>
+      {/* Mobile skeleton */}
+      <div className="lg:hidden space-y-3 p-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={`mobile-${i}`}
+            className="rounded-2xl border border-slate-200 p-4 space-y-3"
+          >
+            <div className="flex gap-2">
+              <div className="skeleton h-4 w-4 shrink-0 rounded" />
+              <div className="flex-1 space-y-2">
+                <div className="skeleton h-3 w-full rounded" />
+                <div className="skeleton h-2 w-2/3 rounded" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="skeleton h-10 rounded-lg" />
+              <div className="skeleton h-10 rounded-lg" />
+              <div className="skeleton h-10 rounded-lg" />
+            </div>
+            <div className="skeleton h-8 w-full rounded-lg" />
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop skeleton */}
+      <div className="hidden lg:contents">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-12 py-3 px-4 items-center gap-2 border-b border-slate-100"
+          >
+            <div className="col-span-3 flex gap-2">
+              <div className="skeleton h-4 w-4 shrink-0 rounded" />
+              <div className="flex-1 space-y-2">
+                <div className="skeleton h-3 w-full rounded" />
+                <div className="skeleton h-2 w-2/3 rounded" />
+              </div>
+            </div>
+            <div className="col-span-2 pl-3">
+              <div className="skeleton h-4 w-10 rounded" />
+            </div>
+            <div className="col-span-1 pl-3">
+              <div className="skeleton h-4 w-8 rounded" />
+            </div>
+            <div className="col-span-1 pl-3">
+              <div className="skeleton h-5 w-8 rounded-full" />
+            </div>
+            <div className="col-span-2 pl-3">
+              <div className="skeleton h-5 w-12 rounded-full" />
+            </div>
+            <div className="col-span-2 pl-3">
+              <div className="skeleton h-5 w-20 rounded-full" />
+            </div>
+            <div className="col-span-1 pl-3">
+              <div className="skeleton h-6 w-10 rounded" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function navRowAccentClass(nav: ProductCompare) {
+  if (nav.pendingRakCount > 0) {
+    return "border-l-amber-500 bg-amber-50/10";
+  }
+  if (nav.status === "selisih") {
+    return "border-l-red-400 bg-red-50/10";
+  }
+  if (nav.status === "sesuai") {
+    return "border-l-emerald-500 bg-emerald-50/10";
+  }
+  return "border-l-slate-300";
+}
+
+function NavRowExpandedPanel({
+  rakDetails,
+  onApprove,
+  isApproving,
+  approvingScanId,
+  compact = false,
+}: {
+  rakDetails: ScanCompareRow[];
+  onApprove: (scanLogId: string) => void;
+  isApproving: boolean;
+  approvingScanId?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`px-3 sm:px-4 pb-4 pt-1 bg-slate-50/60 border-t border-slate-100 ${compact ? "" : "lg:px-4"}`}
+    >
+      <p
+        className={`text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3 ${compact ? "pl-0" : "pl-0 lg:pl-6"}`}
+      >
+        Rincian Penetapan per Rak
+      </p>
+      {rakDetails.length === 0 ? (
+        <p className={`text-xs text-slate-400 ${compact ? "" : "lg:pl-6"}`}>
+          Belum ada scan untuk SKU ini di lokasi ini.
+        </p>
+      ) : (
+        <div
+          className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 ${compact ? "" : "lg:pl-6"}`}
+        >
+          {rakDetails.map((rakRow) => (
+            <RakDetailRow
+              key={`${rakRow.sku}-${rakRow.rak}-${rakRow.office}`}
+              item={rakRow}
+              onApprove={onApprove}
+              isApproving={isApproving}
+              approvingScanId={approvingScanId}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NavCompareItem({
+  nav,
+  rakDetails,
+  isExpanded,
+  onToggleExpand,
+  onCompareNav,
+  isComparePending,
+  onApprove,
+  isApproving,
+  approvingScanId,
+}: {
+  nav: ProductCompare;
+  rakDetails: ScanCompareRow[];
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onCompareNav: () => void;
+  isComparePending: boolean;
+  onApprove: (scanLogId: string) => void;
+  isApproving: boolean;
+  approvingScanId?: string;
+}) {
+  const delta = navDelta(nav);
+  const canCompareNav = nav.pendingRakCount === 0;
+  const accent = navRowAccentClass(nav);
+
+  return (
+    <div className="bg-white">
+      {/* Mobile card */}
+      <div
+        className={`lg:hidden border-l-4 ${accent} p-4 space-y-3`}
+      >
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
+            onClick={onToggleExpand}
+            aria-label={isExpanded ? "Tutup rincian" : "Buka rincian"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+          <div className="min-w-0 flex-1">
+            <p className="font-bold text-slate-800 text-sm leading-snug">
+              {nav.name}
+            </p>
+            <p className="text-[10px] font-mono text-slate-500 mt-0.5">
+              {nav.sku}
+            </p>
+            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-mono mt-1.5 inline-block">
+              {nav.office}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2">
+            <p className="text-[9px] font-bold uppercase text-slate-400">
+              Fisik
+            </p>
+            <p className="text-base font-black text-slate-800">
+              {nav.physicalQty}
+            </p>
+            {nav.pendingRakCount > 0 && (
+              <p className="text-[9px] text-amber-600 font-bold mt-0.5">
+                belum lengkap
+              </p>
+            )}
+          </div>
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2">
+            <p className="text-[9px] font-bold uppercase text-slate-400">ERP</p>
+            <p className="text-base font-black text-slate-800">
+              {nav.status === "belum_compare" ? "—" : nav.systemQty}
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2 flex flex-col items-center justify-center">
+            <p className="text-[9px] font-bold uppercase text-slate-400">
+              Selisih
+            </p>
+            <DeltaBadge delta={delta} />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase text-slate-400">
+              Rak
+            </span>
+            <RakProgressBadge
+              resolved={nav.resolvedRakCount}
+              pending={nav.pendingRakCount}
+            />
+          </div>
+          <NavStatusBadge nav={nav} />
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-sm btn-outline btn-primary w-full"
+          disabled={!canCompareNav || isComparePending}
+          title={
+            !canCompareNav
+              ? "Selesaikan penetapan semua rak terlebih dahulu"
+              : undefined
+          }
+          onClick={onCompareNav}
+        >
+          {isComparePending ? "Memproses..." : "Compare NAV"}
+        </button>
+      </div>
+
+      {/* Desktop row */}
+      <div
+        className={`hidden lg:grid grid-cols-12 py-3 px-4 items-center text-[11px] border-l-4 transition-colors hover:bg-slate-50/80 ${accent}`}
+      >
+        <div className="col-span-3 pr-2 flex items-start gap-2">
+          <button
+            type="button"
+            className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
+            onClick={onToggleExpand}
+            aria-label={isExpanded ? "Tutup rincian" : "Buka rincian"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+          <div>
+            <p className="font-bold text-slate-800 line-clamp-1">{nav.name}</p>
+            <p className="text-[10px] font-mono text-slate-500 mt-0.5">
+              {nav.sku}
+            </p>
+            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-mono mt-1 inline-block">
+              {nav.office}
+            </span>
+          </div>
+        </div>
+        <div className="col-span-2 border-l border-slate-150 pl-3">
+          <span className="font-black text-slate-800 text-sm">
+            {nav.physicalQty}
+          </span>
+          {nav.pendingRakCount > 0 && (
+            <p className="text-[10px] text-amber-600 font-bold mt-0.5">
+              belum lengkap
+            </p>
+          )}
+        </div>
+        <div className="col-span-1 border-l border-slate-150 pl-3 font-black text-slate-800">
+          {nav.status === "belum_compare" ? "—" : nav.systemQty}
+        </div>
+        <div className="col-span-1 border-l border-slate-150 pl-3">
+          <DeltaBadge delta={delta} />
+        </div>
+        <div className="col-span-2 border-l border-slate-150 pl-3">
+          <RakProgressBadge
+            resolved={nav.resolvedRakCount}
+            pending={nav.pendingRakCount}
+          />
+        </div>
+        <div className="col-span-2 border-l border-slate-150 pl-3">
+          <NavStatusBadge nav={nav} />
+        </div>
+        <div className="col-span-1 border-l border-slate-150 pl-3">
+          <button
+            type="button"
+            className="btn btn-xs btn-outline btn-primary"
+            disabled={!canCompareNav || isComparePending}
+            title={
+              !canCompareNav
+                ? "Selesaikan penetapan semua rak terlebih dahulu"
+                : undefined
+            }
+            onClick={onCompareNav}
+          >
+            {isComparePending ? "..." : "NAV"}
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <NavRowExpandedPanel
+          rakDetails={rakDetails}
+          onApprove={onApprove}
+          isApproving={isApproving}
+          approvingScanId={approvingScanId}
+          compact
+        />
+      )}
+    </div>
+  );
+}
+
+function RakDetailRow({
+  item,
+  onApprove,
+  isApproving,
+  approvingScanId,
+}: {
+  item: ScanCompareRow;
+  onApprove: (scanLogId: string) => void;
+  isApproving: boolean;
+  approvingScanId?: string;
+}) {
+  return (
+    <div
+      className={`rounded-xl border p-2.5 sm:p-3 ${
+        !item.match
+          ? item.resolved
+            ? "border-emerald-200 bg-emerald-50/20"
+            : "border-amber-200 bg-amber-50/20"
+          : "border-emerald-200 bg-emerald-50/30"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+            Rak {item.rak}
+          </span>
+          <ScanStatusBadge row={item} />
+        </div>
+        <div className="text-right">
+          <span className="text-xs font-black text-slate-800">
+            {item.approvedQty ?? "—"} pcs
+          </span>
+          {item.approvedBy && (
+            <p className="text-[10px] text-slate-400">oleh {item.approvedBy}</p>
+          )}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {item.scans.map((scan) => {
+          const isApproved = item.approvedScanId === scan.id;
+          const showApprove = !item.match;
+          return (
+            <div
+              key={scan.id}
+              className={`flex items-center justify-between gap-2 text-[11px] rounded-lg px-2 py-1.5 border ${
+                isApproved
+                  ? "border-emerald-300 bg-emerald-50"
+                  : item.match
+                    ? "border-slate-150 bg-white"
+                    : "border-red-200 bg-red-50/80"
+              }`}
+            >
+              <span className="text-slate-600 font-semibold truncate">
+                {scan.operator}
+              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span
+                  className={`text-xs font-black ${
+                    item.match ? "text-slate-800" : "text-red-700"
+                  }`}
+                >
+                  {scan.qty} pcs
+                </span>
+                {showApprove && (
+                  <button
+                    type="button"
+                    className={`btn btn-xs ${isApproved ? "btn-success" : "btn-primary"}`}
+                    disabled={isApproving && approvingScanId === scan.id}
+                    onClick={() => onApprove(scan.id)}
+                  >
+                    {isApproved ? "Terpilih" : "Tetapkan"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ScanStatusBadge({ row }: { row: ScanCompareRow }) {
+  const base = "px-2 py-0.5 rounded-full text-[10px] font-extrabold border";
+
+  if (!row.match && row.resolved) {
+    return (
+      <span
+        className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200`}
+      >
+        DITETAPKAN
+      </span>
+    );
+  }
   if (row.resolved) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+      <span
+        className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200`}
+      >
         RESOLVED
       </span>
     );
   }
   if (!row.match) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-red-50 text-red-700 border border-red-200">
+      <span className={`${base} bg-red-50 text-red-700 border-red-200`}>
         QTY BEDA
       </span>
     );
   }
   return (
-    <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
+    <span className={`${base} bg-amber-50 text-amber-700 border-amber-200`}>
       BELUM DITETAPKAN
     </span>
   );
 }
 
 function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
+  const base = "px-2 py-0.5 rounded-full text-[10px] font-extrabold border";
+
   if (!nav) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-slate-100 text-slate-500 border border-slate-200">
+      <span className={`${base} bg-slate-100 text-slate-500 border-slate-200`}>
         BELUM ADA DATA
       </span>
     );
@@ -112,10 +645,12 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
   if (nav.status === "sesuai") {
     return (
       <div className="flex flex-col gap-0.5">
-        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 w-fit">
+        <span
+          className={`${base} bg-emerald-50 text-emerald-700 border-emerald-200 w-fit`}
+        >
           NAV SESUAI
         </span>
-        <span className="text-[9px] text-slate-500 font-mono">
+        <span className="text-[10px] text-slate-500 font-mono">
           {nav.physicalQty} / {nav.systemQty} ERP
         </span>
       </div>
@@ -126,11 +661,13 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
     const delta = nav.physicalQty - nav.systemQty;
     return (
       <div className="flex flex-col gap-0.5">
-        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200 w-fit">
+        <span
+          className={`${base} bg-amber-50 text-amber-700 border-amber-200 w-fit`}
+        >
           NAV SELISIH ({delta >= 0 ? "+" : ""}
           {delta})
         </span>
-        <span className="text-[9px] text-slate-500 font-mono">
+        <span className="text-[10px] text-slate-500 font-mono">
           {nav.physicalQty > 0 ? nav.physicalQty : "—"} / {nav.systemQty} ERP
         </span>
       </div>
@@ -138,28 +675,53 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
   }
 
   return (
-    <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200">
+    <span className={`${base} bg-slate-100 text-slate-600 border-slate-200`}>
       BELUM COMPARE
     </span>
   );
 }
 
 export default function Home() {
-  const [selectedLocation, setSelectedLocation] = useState("Semua");
-  const [locations, setLocations] = useState<any[]>([]);
+  const { userInfo } = useUserInfo();
+  const showOfficePicker = isOwner(userInfo);
+  const [pickedOffice, setPickedOffice] = useState(() => {
+    if (typeof window === "undefined") return "Semua";
+    const saved = getAdminDefaultOffice();
+    return saved || "Semua";
+  });
+  const [locations, setLocations] = useState<
+    { code: string; name?: string; description?: string }[]
+  >([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
+  const compareOffice = compareOfficeScope(
+    userInfo,
+    showOfficePicker ? pickedOffice : undefined,
+  );
   const [selectedRak, setSelectedRak] = useState("Semua");
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [navStatusFilter, setNavStatusFilter] =
+    useState<NavStatusFilter>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("default");
   const [isSyncingWithSoT, setIsSyncingWithSoT] = useState(false);
-  const [username, setUsername] = useState("");
+  const [expandedNavKeys, setExpandedNavKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [collapsedNavKeys, setCollapsedNavKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
-  const { userInfo } = useUserInfo();
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
   const compareFilters: CompareQueryParams = {
-    locationCode: selectedLocation,
+    office: compareOffice,
     rak: selectedRak,
-    search: searchTerm,
+    search: debouncedSearch,
   };
 
   const scanCompareQuery = useQuery({
@@ -176,20 +738,10 @@ export default function Home() {
   });
 
   const scanLogsAllQuery = useQuery({
-    queryKey: ["opname", "scans", selectedLocation, "Semua"],
+    queryKey: ["opname", "scans", compareOffice, "Semua"],
     queryFn: async () => {
       const res = await axiosInstance.get<ScanLog[]>("/api/opname/scans", {
-        params: { locationCode: selectedLocation, rak: "Semua" },
-      });
-      return Array.isArray(res.data) ? res.data : [];
-    },
-  });
-
-  const scanLogsFeedQuery = useQuery({
-    queryKey: ["opname", "scans", selectedLocation, selectedRak],
-    queryFn: async () => {
-      const res = await axiosInstance.get<ScanLog[]>("/api/opname/scans", {
-        params: { locationCode: selectedLocation, rak: selectedRak },
+        params: { office: compareOffice, rak: "Semua" },
       });
       return Array.isArray(res.data) ? res.data : [];
     },
@@ -197,7 +749,84 @@ export default function Home() {
 
   const scanCompareRows = scanCompareQuery.data ?? [];
   const navCompareRows = navCompareQuery.data ?? [];
-  const scanLogsFeed = scanLogsFeedQuery.data ?? [];
+
+  const filteredNavRows = useMemo(() => {
+    const statusFiltered = applyNavStatusFilter(
+      navCompareRows,
+      navStatusFilter,
+    );
+    return sortNavRows(statusFiltered, sortBy);
+  }, [navCompareRows, navStatusFilter, sortBy]);
+
+  const hasActiveFilters =
+    (showOfficePicker && pickedOffice !== "Semua") ||
+    selectedRak !== "Semua" ||
+    debouncedSearch !== "" ||
+    navStatusFilter !== "all" ||
+    sortBy !== "default";
+
+  const resetFilters = () => {
+    setPickedOffice("Semua");
+    setSelectedRak("Semua");
+    setSearchTerm("");
+    setDebouncedSearch("");
+    setNavStatusFilter("all");
+    setSortBy("default");
+    setExpandedNavKeys(new Set());
+    setCollapsedNavKeys(new Set());
+  };
+
+  const scanBySkuLocation = useMemo(() => {
+    const map = new Map<string, ScanCompareRow[]>();
+    for (const row of scanCompareRows) {
+      const key = skuLocationKey(row.sku, row.office);
+      const existing = map.get(key) ?? [];
+      existing.push(row);
+      map.set(key, existing);
+    }
+    for (const rows of map.values()) {
+      rows.sort((a, b) => a.rak - b.rak);
+    }
+    return map;
+  }, [scanCompareRows]);
+
+  const toggleNavExpand = (key: string, currentlyExpanded: boolean) => {
+    if (currentlyExpanded) {
+      setExpandedNavKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      setCollapsedNavKeys((prev) => new Set(prev).add(key));
+    } else {
+      setCollapsedNavKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      setExpandedNavKeys((prev) => new Set(prev).add(key));
+    }
+  };
+
+  const expandAllRows = () => {
+    setExpandedNavKeys(
+      new Set(filteredNavRows.map((n) => skuLocationKey(n.sku, n.office))),
+    );
+    setCollapsedNavKeys(new Set());
+  };
+
+  const collapseAllRows = () => {
+    setExpandedNavKeys(new Set());
+    setCollapsedNavKeys(
+      new Set(filteredNavRows.map((n) => skuLocationKey(n.sku, n.office))),
+    );
+  };
+
+  const isNavRowExpanded = (navKey: string, pendingRakCount: number) => {
+    if (collapsedNavKeys.has(navKey)) return false;
+    if (expandedNavKeys.has(navKey)) return true;
+    return pendingRakCount > 0;
+  };
 
   const [toast, setToast] = useState<{
     message: string;
@@ -234,8 +863,8 @@ export default function Home() {
       invalidateCompareQueries();
       showToast("Compare NAV selesai", "success");
     },
-    onError: () => {
-      showToast("Gagal compare NAV ke ERP", "warning");
+    onError: (err) => {
+      showToast(JSON.stringify(err), "warning");
     },
   });
 
@@ -256,8 +885,36 @@ export default function Home() {
   useEffect(() => {
     if (!userInfo?.username) {
       redirect("/login");
+      return;
+    }
+    if (!canAccessAdmin(userInfo)) {
+      redirect("/input");
     }
   }, [userInfo]);
+
+  useEffect(() => {
+    if (!showOfficePicker) return;
+
+    const fetchLocations = async () => {
+      setIsLoadingLocations(true);
+      try {
+        const res = await locationApi.getAllLocation("");
+        if (Array.isArray(res)) {
+          setLocations(res);
+        } else if (res && Array.isArray(res.data)) {
+          setLocations(res.data);
+        } else {
+          setLocations([]);
+        }
+      } catch {
+        setLocations([]);
+      } finally {
+        setIsLoadingLocations(false);
+      }
+    };
+
+    fetchLocations();
+  }, [showOfficePicker]);
 
   useEffect(() => {
     if (toast) {
@@ -266,48 +923,13 @@ export default function Home() {
     }
   }, [toast]);
 
-  // Sync state username with store userInfo
-  useEffect(() => {
-    if (userInfo) {
-      const name =
-        userInfo.displayName ||
-        userInfo.username ||
-        userInfo.name ||
-        userInfo.usernameLdap;
-      if (name) {
-        setUsername(name);
-      }
-    }
-  }, [userInfo]);
-
-  // Load locations and user info on mount
-  useEffect(() => {
-    const fetchLocations = async () => {
-      setIsLoadingLocations(true);
-      try {
-        const res = await locationApi.getAllLocation("");
-        let fetchedLocs: any[] = [];
-        if (Array.isArray(res)) {
-          fetchedLocs = res;
-        } else if (res && Array.isArray(res.data)) {
-          fetchedLocs = res.data;
-        }
-        setLocations(fetchedLocs);
-      } catch (err) {
-        setLocations([]);
-      } finally {
-        setIsLoadingLocations(false);
-      }
-    };
-    fetchLocations();
-  }, [userInfo]);
 
   // Manual Trigger to Sync system stock with ERP / SOT
   const fetchQuantitiesFromSoT = async (forceToast = false) => {
     setIsSyncingWithSoT(true);
     try {
       const res = await axiosInstance.post("/so/api/opname/sync", {
-        locationCode: selectedLocation,
+        office: compareOffice,
       });
       if (Array.isArray(res.data)) {
         invalidateOpnameQueries();
@@ -327,24 +949,6 @@ export default function Home() {
     }
   };
 
-  // Reset active session state
-  const resetAllReconciled = async () => {
-    try {
-      const res = await axiosInstance.post("/api/opname/reset", {
-        locationCode: selectedLocation,
-      });
-      if (res.data) {
-        invalidateOpnameQueries();
-        showToast(
-          "State berhasil direset ke status awal. Scan database dibersihkan.",
-          "info",
-        );
-      }
-    } catch {
-      showToast("Gagal mereset state", "warning");
-    }
-  };
-
   const scanLogsAll = scanLogsAllQuery.data ?? [];
 
   const uniqueRaks = useMemo(() => {
@@ -353,9 +957,11 @@ export default function Home() {
   }, [scanLogsAll]);
 
   const stats = useMemo(() => {
-    const total = scanCompareRows.length;
-    const scanResolved = scanCompareRows.filter((i) => i.resolved).length;
-    const scanPending = scanCompareRows.filter((i) => !i.resolved).length;
+    const totalSkuLocation = navCompareRows.length;
+    const rakPending = navCompareRows.reduce(
+      (sum, n) => sum + n.pendingRakCount,
+      0,
+    );
     const navSesuai = navCompareRows.filter(
       (i) => i.status === "sesuai",
     ).length;
@@ -363,13 +969,12 @@ export default function Home() {
       (i) => i.status === "selisih",
     ).length;
     return {
-      total,
-      scanResolved,
-      scanPending,
+      totalSkuLocation,
+      rakPending,
       navSesuai,
       navSelisih,
     };
-  }, [scanCompareRows, navCompareRows]);
+  }, [navCompareRows]);
 
   return (
     <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -379,7 +984,7 @@ export default function Home() {
       {/* ==========================================
           HEADER SECTION ( Frosted White Glass )
           ========================================== */}
-      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl sticky top-0 z-30 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm shadow-slate-100/50">
+      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl sticky top-0 z-30 px-3 sm:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm shadow-slate-100/50">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-linear-to-tr from-indigo-500 to-violet-500 rounded-2xl shadow-md shadow-indigo-500/10 ring-1 ring-white">
             <Layers className="h-6 w-6 text-white animate-pulse" />
@@ -401,33 +1006,13 @@ export default function Home() {
 
         {/* Global Toolbar */}
         <div className="flex items-center gap-3 self-end md:self-auto">
-          {/* Refresh Source of Truth trigger button */}
-          <button
-            onClick={() => fetchQuantitiesFromSoT(true)}
-            disabled={isSyncingWithSoT}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-205 text-xs font-bold text-indigo-650 hover:text-indigo-800 bg-white hover:bg-slate-50 transition-all duration-200 shadow-sm cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${isSyncingWithSoT ? "animate-spin" : ""}`}
-            />
-            {isSyncingWithSoT ? "Syncing..." : "Refresh Data Sistem"}
-          </button>
-
           <Link
-            to="/"
+            to="/input"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-indigo-200 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-all duration-200 shadow-sm cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
             Input Barang
           </Link>
-
-          <button
-            onClick={resetAllReconciled}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:text-slate-900 hover:border-slate-350 bg-white hover:bg-slate-50 transition-all duration-200 shadow-sm cursor-pointer"
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-            Reset State
-          </button>
 
           <div className="h-6 w-px bg-slate-200" />
           <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold tracking-wider uppercase border border-emerald-200 shadow-sm">
@@ -435,10 +1020,10 @@ export default function Home() {
             Live Sync
           </span>
 
-          {username && (
+          {userInfo?.username && (
             <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-750 text-[10px] font-bold tracking-wider border border-indigo-150 shadow-sm">
               <UserCheck className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-              <span>Opr: {username}</span>
+              <span>{userSessionLabel(userInfo)}</span>
             </span>
           )}
         </div>
@@ -448,7 +1033,7 @@ export default function Home() {
           TOAST ALERT ( Frosted Floating Glass )
           ========================================== */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-50 transform translate-y-0 transition-all duration-300">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:bottom-6 z-50 transform translate-y-0 transition-all duration-300">
           <div
             className={`flex items-center gap-3 px-5 py-4 rounded-2xl border backdrop-blur-xl shadow-xl ${
               toast.type === "success"
@@ -483,17 +1068,17 @@ export default function Home() {
       {/* ==========================================
           METRICS & ANALYTICS BAR ( Clean White Cards )
           ========================================== */}
-      <section className="relative z-10 px-6 pt-6 grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Metric 1 */}
         <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200">
           <div className="absolute top-0 right-0 h-16 w-16 bg-indigo-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-              Total Data
+              Total SKU / Lokasi
             </span>
             <span className="text-2xl font-black tracking-tight text-slate-800">
-              {stats.total}{" "}
-              <span className="text-xs font-medium text-slate-400">items</span>
+              {stats.totalSkuLocation}{" "}
+              <span className="text-xs font-medium text-slate-400">item</span>
             </span>
           </div>
           <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100">
@@ -506,10 +1091,10 @@ export default function Home() {
           <div className="absolute top-0 right-0 h-16 w-16 bg-red-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-              Scan Belum Ditetapkan
+              Rak Pending
             </span>
             <span className="text-2xl font-black tracking-tight text-red-500">
-              {stats.scanPending}{" "}
+              {stats.rakPending}{" "}
               <span className="text-xs font-medium text-red-400">rak</span>
             </span>
           </div>
@@ -540,13 +1125,11 @@ export default function Home() {
           <div className="absolute top-0 right-0 h-16 w-16 bg-emerald-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-              Scan Resolved
+              NAV Sesuai
             </span>
             <span className="text-2xl font-black tracking-tight text-emerald-600">
-              {stats.scanResolved}{" "}
-              <span className="text-xs font-medium text-slate-400">
-                rak · {stats.navSesuai} nav sesuai
-              </span>
+              {stats.navSesuai}{" "}
+              <span className="text-xs font-medium text-slate-400">sku</span>
             </span>
           </div>
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
@@ -556,58 +1139,58 @@ export default function Home() {
       </section>
 
       {/* ==========================================
-          CONTROL BAR & FILTERS PANEL ( Clean Elegant Glass )
+          CONTROL BAR & FILTERS PANEL
           ========================================== */}
-      <section className="relative z-10 px-6 pt-6">
-        <div className="bg-white border border-slate-200/85 rounded-3xl p-5 shadow-sm flex flex-col xl:flex-row xl:items-center justify-between gap-5">
-          {/* Left: Interactive Filters */}
-          <div className="flex flex-wrap items-center gap-6">
-            {/* Dropdown Wilayah / Lokasi */}
-            <div className="flex flex-col gap-1.5">
+      <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6">
+        <div className="bg-white border border-slate-200/85 rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
+          {/* Baris 1: filter server */}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3 sm:gap-4">
+            <div className="flex flex-col gap-1.5 w-full sm:min-w-[180px] sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <MapPin className="h-3 w-3 text-indigo-500" />
-                Pilih Wilayah / Gudang
+                Wilayah / Gudang
               </label>
-              <select
-                value={selectedLocation}
-                onChange={(e) => {
-                  setSelectedLocation(e.target.value);
-                  setSelectedRak("Semua"); // reset rak filter on location change
-                }}
-                disabled={isLoadingLocations}
-                className="bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none transition-all duration-200  shadow-inner font-semibold cursor-pointer"
-              >
-                {isLoadingLocations ? (
-                  <option>Memuat wilayah...</option>
-                ) : (
-                  <>
-                    <option value="Semua">Semua Wilayah</option>
-                    {locations.map((loc) => (
-                      <option key={loc.code} value={loc.code}>
-                        {loc.name || loc.description || loc.code}
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
+              {showOfficePicker ? (
+                <select
+                  value={pickedOffice}
+                  onChange={(e) => {
+                    setPickedOffice(e.target.value);
+                    setSelectedRak("Semua");
+                  }}
+                  disabled={isLoadingLocations}
+                  className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
+                >
+                  {isLoadingLocations ? (
+                    <option value="Semua">Memuat wilayah...</option>
+                  ) : (
+                    <>
+                      <option value="Semua">Semua Wilayah</option>
+                      {locations.map((loc) => (
+                        <option key={loc.code} value={loc.code}>
+                          {loc.name || loc.description || loc.code}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              ) : (
+                <div className="select select-bordered select-sm w-full bg-slate-50 font-semibold flex items-center px-3">
+                  {isAdmin(userInfo) || compareOffice === "Semua"
+                    ? "Semua Wilayah"
+                    : compareOffice || "—"}
+                </div>
+              )}
             </div>
 
-            {/* Dropdown "Pilih Rak" (Dynamic based on scans) */}
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 w-full sm:min-w-[140px] sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <SlidersHorizontal className="h-3 w-3 text-indigo-500" />
-                Filter Nomor Rak
+                Nomor Rak
               </label>
               <select
                 value={selectedRak}
-                onChange={(e) => {
-                  setSelectedRak(e.target.value);
-                  showToast(
-                    `Filter rak diubah ke: ${e.target.value === "Semua" ? "Semua Rak" : `Rak ${e.target.value}`}`,
-                    "info",
-                  );
-                }}
-                className="bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none transition-all duration-200  shadow-inner font-semibold cursor-pointer"
+                onChange={(e) => setSelectedRak(e.target.value)}
+                className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
               >
                 <option value="Semua">Semua Rak</option>
                 {uniqueRaks.map((rakNo) => (
@@ -617,251 +1200,153 @@ export default function Home() {
                 ))}
               </select>
             </div>
+
+            <div className="flex flex-col gap-1.5 w-full sm:flex-1 sm:min-w-[200px]">
+              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <Search className="h-3 w-3 text-indigo-500" />
+                Cari SKU / Nama
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Cari SKU atau nama barang..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="input input-bordered input-sm w-full pl-9 bg-slate-50 font-medium"
+                />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs btn-circle"
+                    onClick={() => setSearchTerm("")}
+                    aria-label="Hapus pencarian"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm gap-1.5 text-slate-600"
+                onClick={resetFilters}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset filter
+              </button>
+            )}
           </div>
 
-          {/* Right: Real-time Search */}
-          <div className="flex items-center gap-3 w-full xl:w-80 self-end xl:self-center">
-            <div className="relative w-full">
-              <input
-                type="text"
-                placeholder="Cari SKU atau nama barang..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none transition-all duration-200 shadow-inner"
-              />
-              <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
+          {/* Baris 2: filter client */}
+          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-slate-100">
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider shrink-0">
+              Status NAV
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {NAV_STATUS_FILTERS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`btn btn-xs rounded-full ${
+                    navStatusFilter === value
+                      ? "btn-primary"
+                      : "btn-ghost border border-slate-200"
+                  }`}
+                  onClick={() => setNavStatusFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="h-5 w-px bg-slate-200 hidden sm:block" />
+
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider shrink-0">
+                Urutkan
+              </label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortBy)}
+                className="select select-bordered select-xs bg-slate-50 font-semibold"
+              >
+                {SORT_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
       </section>
 
       {/* ==========================================
-          MAIN AREA: SIDEBAR LOG & SPLIT COMPARE GRID
+          MAIN AREA: NAV-CENTRIC COMPARE
           ========================================== */}
-      <main className="relative z-10 flex-1 px-6 py-6 grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* ==========================================
-            LEFT SIDEBAR: REAL-TIME SCAN FEEDS ( Frosted Glass Light )
-            ========================================== */}
-        <section className="lg:col-span-1 bg-white/90 border border-slate-200 rounded-3xl flex flex-col shadow-sm">
-          <div className="p-4 border-b border-slate-150 bg-slate-50/50 rounded-t-3xl flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-indigo-500 animate-spin-slow" />
-              <h2 className="text-xs font-bold tracking-wider uppercase text-slate-700">
-                Riwayat Scan
-              </h2>
-            </div>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-600 font-bold border border-indigo-100 tracking-wide">
-              {scanLogsFeed.length} Feed
-            </span>
-          </div>
-
-          {/* List Scroll */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-            {scanLogsFeed.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
-                <SlidersHorizontal className="h-8 w-8 text-slate-300 mb-2" />
-                <p className="text-xs font-semibold">
-                  Belum ada scan di wilayah/rak ini
-                </p>
-              </div>
-            ) : (
-              scanLogsFeed.map((log) => (
-                <div
-                  key={log.id}
-                  className="p-3.5 rounded-2xl border border-slate-150 bg-white hover:bg-slate-50/50 hover:-translate-y-px transition-all duration-200 group relative shadow-sm"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-bold border border-indigo-100/80 tracking-wider">
-                      Rak {log.rak}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-medium">
-                      {new Date(log.createdAt).toLocaleTimeString("id-ID", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-
-                  <p className="text-xs font-bold text-slate-800 mb-1 leading-relaxed group-hover:text-indigo-955 transition-colors duration-150">
-                    {log.name}
-                  </p>
-
-                  <div className="flex items-center justify-between text-[10px] text-slate-500">
-                    <span className="font-semibold tracking-wider font-mono bg-slate-50 px-1.5 py-0.5 rounded border border-slate-150 text-slate-700">
-                      SKU: {log.sku}
-                    </span>
-                    <span className="flex items-center gap-1 font-medium text-slate-400">
-                      <span className="h-1 w-1 rounded-full bg-slate-300" />
-                      Opr: {log.operator}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* ==========================================
-            CENTER AREA: TAB-FREE RECONCILIATION TABLE
-            ========================================== */}
-        <section className="lg:col-span-3 bg-white/95 border border-slate-200 rounded-3xl flex flex-col overflow-hidden shadow-sm relative">
-          <div className="p-4 border-b border-slate-150 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <p className="text-xs font-bold text-slate-600">
-              Perbandingan Operator (per Rak)
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={() => refreshScanCompare()}
-              disabled={scanCompareQuery.isFetching}
-            >
-              {scanCompareQuery.isFetching ? "Memuat..." : "Refresh Scan"}
-            </button>
-          </div>
-
-          <div className="flex-1 flex flex-col overflow-hidden max-h-[50vh]">
-            <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 py-3.5 px-4 sticky top-0 z-10">
-              <div className="col-span-3">Info Barang</div>
-              <div className="col-span-4 border-l border-slate-200 pl-4">
-                <span className="flex items-center gap-1.5 text-indigo-650">
-                  <UserCheck className="h-3 w-3" /> Qty per Operator
-                </span>
-              </div>
-              <div className="col-span-2 border-l border-slate-200 pl-4">
-                Status Scan
-              </div>
-              <div className="col-span-2 border-l border-slate-200 pl-4">
-                Qty Ditetapkan
-              </div>
-              <div className="col-span-1 border-l border-slate-200 pl-4">
-                Lokasi
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-150 bg-white">
-              {scanCompareRows.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-12 text-slate-400 bg-white">
-                  <CheckCircle2 className="h-12 w-12 text-slate-200 mb-3" />
-                  <p className="text-sm font-bold text-slate-700">
-                    Belum ada data scan
-                  </p>
-                </div>
-              ) : (
-                scanCompareRows.map((item) => {
-                  const hasIssue = !item.resolved;
-                  return (
-                    <div
-                      key={`${item.sku}-${item.rak}-${item.locationCode}`}
-                      className={`grid grid-cols-12 py-3.5 px-4 items-center transition-all duration-150 border-l-4 ${
-                        hasIssue
-                          ? "border-l-amber-500 bg-amber-50/15"
-                          : "border-l-emerald-500 bg-emerald-50/15"
-                      }`}
-                    >
-                      <div className="col-span-3 pr-4">
-                        <p className="text-xs font-bold text-slate-800 line-clamp-1">
-                          {item.name}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                          <span className="text-[10px] text-slate-505 font-mono tracking-wide font-medium bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
-                            SKU: {item.sku}
-                          </span>
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                            Rak {item.rak}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="col-span-4 border-l border-slate-150 pl-4 py-1">
-                        <div className="flex flex-col gap-1.5">
-                          {item.scans.map((scan) => {
-                            const isApproved = item.approvedScanId === scan.id;
-                            const showApprove = !item.resolved;
-                            return (
-                              <div
-                                key={scan.id}
-                                className={`flex items-center justify-between gap-2 text-[11px] rounded-lg px-2 py-1 border ${
-                                  isApproved
-                                    ? "border-emerald-300 bg-emerald-50"
-                                    : item.match
-                                      ? "border-slate-150 bg-white"
-                                      : "border-red-200 bg-red-50/80"
-                                }`}
-                              >
-                                <span className="text-slate-500 font-semibold truncate">
-                                  {scan.operator}
-                                </span>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <span
-                                    className={`text-xs font-black ${
-                                      item.match
-                                        ? "text-slate-800"
-                                        : "text-red-700"
-                                    }`}
-                                  >
-                                    {scan.qty} pcs
-                                  </span>
-                                  {showApprove && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-xs btn-primary"
-                                      disabled={
-                                        approveScanMutation.isPending &&
-                                        approveScanMutation.variables ===
-                                          scan.id
-                                      }
-                                      onClick={() =>
-                                        approveScanMutation.mutate(scan.id)
-                                      }
-                                    >
-                                      Tetapkan
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-4 py-1">
-                        <ScanStatusBadge row={item} />
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-4 py-1">
-                        <span className="text-xs font-black text-slate-800">
-                          {item.approvedQty ?? "—"} pcs
-                        </span>
-                        {item.approvedBy && (
-                          <p className="text-[9px] text-slate-400 mt-0.5">
-                            oleh {item.approvedBy}
-                          </p>
-                        )}
-                      </div>
-                      <div className="col-span-1 border-l border-slate-150 pl-4 py-1">
-                        <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-mono block truncate">
-                          {item.locationCode}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          <div className="border-t border-slate-200 bg-slate-50/80 p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+      <main className="relative z-10 flex-1 px-3 sm:px-6 py-4 sm:py-6">
+        <section className="bg-white/95 border border-slate-200 rounded-2xl sm:rounded-3xl flex flex-col overflow-hidden shadow-sm lg:max-h-[65vh]">
+          <div className="p-3 sm:p-4 border-b border-slate-150 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+            <div>
               <p className="text-xs font-bold text-slate-600">
                 Perbandingan NAV (per SKU + Lokasi)
               </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Total fisik = jumlah qty ditetapkan per rak. Tetapkan qty
+                operator di rincian rak.
+              </p>
+              {hasActiveFilters && navCompareRows.length > 0 && (
+                <p className="text-[10px] text-indigo-600 font-bold mt-1">
+                  Menampilkan {filteredNavRows.length} dari{" "}
+                  {navCompareRows.length} SKU
+                </p>
+              )}
             </div>
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                onClick={expandAllRows}
+              >
+                Buka semua
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                onClick={collapseAllRows}
+              >
+                Tutup semua
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm gap-1.5"
+                onClick={() => refreshScanCompare()}
+                disabled={scanCompareQuery.isFetching}
+              >
+                <RefreshCcw
+                  className={`h-3.5 w-3.5 ${scanCompareQuery.isFetching ? "animate-spin" : ""}`}
+                />
+                {scanCompareQuery.isFetching ? "Memuat..." : "Perbarui"}
+              </button>
+            </div>
+          </div>
 
-            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white max-h-[40vh] flex flex-col">
-              <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 py-3 px-4">
+          <div className="overflow-y-auto flex-1 lg:max-h-[75vh]">
+            {/* Desktop table header */}
+            <div className="hidden lg:block min-w-[900px]">
+              <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 py-3 px-4 sticky top-0 z-10">
                 <div className="col-span-3">Info Barang</div>
                 <div className="col-span-2 border-l border-slate-200 pl-3">
                   Fisik (sum)
                 </div>
-                <div className="col-span-2 border-l border-slate-200 pl-3">
+                <div className="col-span-1 border-l border-slate-200 pl-3">
                   ERP
+                </div>
+                <div className="col-span-1 border-l border-slate-200 pl-3">
+                  Selisih
                 </div>
                 <div className="col-span-2 border-l border-slate-200 pl-3">
                   Rak
@@ -873,65 +1358,75 @@ export default function Home() {
                   Aksi
                 </div>
               </div>
-              <div className="overflow-y-auto divide-y divide-slate-150">
-                {navCompareRows.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-slate-400">
-                    Belum ada data NAV
-                  </div>
-                ) : (
-                  navCompareRows.map((nav) => (
-                    <div
-                      key={nav.id}
-                      className="grid grid-cols-12 py-3 px-4 items-center text-[11px]"
-                    >
-                      <div className="col-span-3 pr-2">
-                        <p className="font-bold text-slate-800 line-clamp-1">
-                          {nav.name}
+            </div>
+
+            <div className="divide-y divide-slate-150 lg:min-w-[900px]">
+                {navCompareQuery.isLoading ? (
+                  <NavTableSkeleton />
+                ) : filteredNavRows.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-center p-12 text-slate-400">
+                    {navCompareRows.length > 0 ? (
+                      <>
+                        <SlidersHorizontal className="h-12 w-12 text-slate-200 mb-3" />
+                        <p className="text-sm font-bold text-slate-700">
+                          Tidak ada hasil untuk filter ini
                         </p>
-                        <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-                          {nav.sku} · {nav.locationCode}
+                        <p className="text-xs text-slate-400 mt-1 mb-4">
+                          Coba ubah filter status, rak, atau kata kunci
+                          pencarian
                         </p>
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-3 font-black text-slate-800">
-                        {nav.physicalQty}
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-3 font-black text-slate-800">
-                        {nav.status === "belum_compare" ? "—" : nav.systemQty}
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-3 text-[10px] text-slate-500">
-                        <span className="text-emerald-600 font-bold">
-                          {nav.resolvedRakCount} resolved
-                        </span>
-                        {nav.pendingRakCount > 0 && (
-                          <span className="block text-amber-600 font-bold">
-                            {nav.pendingRakCount} pending
-                          </span>
-                        )}
-                      </div>
-                      <div className="col-span-2 border-l border-slate-150 pl-3">
-                        <NavStatusBadge nav={nav} />
-                      </div>
-                      <div className="col-span-1 border-l border-slate-150 pl-3">
                         <button
                           type="button"
-                          className="btn btn-xs btn-outline btn-primary"
-                          disabled={
-                            checkNavMutation.isPending &&
-                            checkNavMutation.variables === nav.id
-                          }
-                          onClick={() => checkNavMutation.mutate(nav.id)}
+                          className="btn btn-outline btn-sm gap-1.5"
+                          onClick={resetFilters}
                         >
-                          {checkNavMutation.isPending &&
-                          checkNavMutation.variables === nav.id
-                            ? "..."
-                            : "NAV"}
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          Reset filter
                         </button>
-                      </div>
-                    </div>
-                  ))
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-12 w-12 text-slate-200 mb-3" />
+                        <p className="text-sm font-bold text-slate-700">
+                          Belum ada data perbandingan
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Mulai scan barang di halaman Input Barang
+                        </p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  filteredNavRows.map((nav) => {
+                    const navKey = skuLocationKey(nav.sku, nav.office);
+                    const rakDetails = scanBySkuLocation.get(navKey) ?? [];
+                    const isExpanded = isNavRowExpanded(
+                      navKey,
+                      nav.pendingRakCount,
+                    );
+
+                    return (
+                      <NavCompareItem
+                        key={nav.id}
+                        nav={nav}
+                        rakDetails={rakDetails}
+                        isExpanded={isExpanded}
+                        onToggleExpand={() =>
+                          toggleNavExpand(navKey, isExpanded)
+                        }
+                        onCompareNav={() => checkNavMutation.mutate(nav.id)}
+                        isComparePending={
+                          checkNavMutation.isPending &&
+                          checkNavMutation.variables === nav.id
+                        }
+                        onApprove={(id) => approveScanMutation.mutate(id)}
+                        isApproving={approveScanMutation.isPending}
+                        approvingScanId={approveScanMutation.variables}
+                      />
+                    );
+                  })
                 )}
               </div>
-            </div>
           </div>
         </section>
       </main>

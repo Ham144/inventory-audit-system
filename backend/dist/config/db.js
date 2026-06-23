@@ -27,5 +27,5 @@ export async function connectDB() {
         }
     }
 }
-export { prisma };
+export { prisma, pool };
 export default prisma;

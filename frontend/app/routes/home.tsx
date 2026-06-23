@@ -10,12 +10,18 @@ import {
   FileText,
   AlertCircle,
 } from "lucide-react";
-import locationApi from "../api/LocationApi";
 import ProductApi from "../api/product.api";
-import { getUserInfo, logout } from "../api/authApi";
+import locationApi from "../api/LocationApi";
+import { logout } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
 import { useUserInfo } from "~/store";
-import { useQuery } from "@tanstack/react-query";
+import {
+  canAccessAdmin,
+  canScan,
+  isOwner,
+  userOffice,
+} from "~/libs/user-access";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 interface LocationItem {
   code: string;
@@ -42,32 +48,24 @@ function getProductSku(product: ProductItem): string {
 interface ScanLogItem {
   sku: string;
   rak: number;
-  locationCode?: string;
+  office?: string;
+  operator?: string;
+  qty?: number;
 }
 
-const LAST_LOCATION_KEY = "stok-opname-last-location";
+type RescanConfirm = {
+  previousQty: number;
+  addedQty: number;
+  rak: number;
+};
 
-function getSavedLocation(): string {
-  if (typeof window === "undefined") return "";
-  return (
-    localStorage.getItem(LAST_LOCATION_KEY) ||
-    localStorage.getItem("lastLocation") ||
-    ""
-  );
+function getRakStorageKey(sku: string, office: string): string {
+  return `rak-${sku}-${office}`;
 }
 
-function saveLocation(locationCode: string) {
-  if (typeof window === "undefined" || !locationCode) return;
-  localStorage.setItem(LAST_LOCATION_KEY, locationCode);
-}
-
-function getRakStorageKey(sku: string, locationCode: string): string {
-  return `rak-${sku}-${locationCode}`;
-}
-
-function getLastRakFromStorage(sku: string, locationCode: string): number {
+function getLastRakFromStorage(sku: string, office: string): number {
   if (typeof window === "undefined") return 0;
-  const raw = localStorage.getItem(getRakStorageKey(sku, locationCode));
+  const raw = localStorage.getItem(getRakStorageKey(sku, office));
   if (raw === null || raw === "") return 0;
   const lastRak = Number(raw);
   return Number.isFinite(lastRak) && lastRak >= 1 ? lastRak : 0;
@@ -75,10 +73,10 @@ function getLastRakFromStorage(sku: string, locationCode: string): number {
 
 function getSuggestedNextRak(
   sku: string,
-  locationCode: string,
+  office: string,
   scans: ScanLogItem[],
 ): number {
-  const lastFromStorage = getLastRakFromStorage(sku, locationCode);
+  const lastFromStorage = getLastRakFromStorage(sku, office);
   const maxFromDb =
     scans.length > 0 ? Math.max(...scans.map((s) => Number(s.rak) || 0)) : 0;
   const nextFromStorage = lastFromStorage > 0 ? lastFromStorage + 1 : 1;
@@ -87,109 +85,88 @@ function getSuggestedNextRak(
 }
 
 export default function Scan() {
-  const [locations, setLocations] = useState<LocationItem[]>([]);
-  const [selectedLocation, setSelectedLocation] = useState(() =>
-    getSavedLocation(),
-  );
   const [searchQuery, setSearchQuery] = useState("");
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(
     null,
   );
   const { userInfo } = useUserInfo();
+  const showOfficePicker = isOwner(userInfo);
+  const fixedOffice = userOffice(userInfo);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
+  const [pickedOffice, setPickedOffice] = useState("");
+  const [isLoadingLocations, setIsLoadingLocations] = useState(false);
+  const activeScanOffice = showOfficePicker ? pickedOffice : fixedOffice;
+  const scanAllowed = canScan(userInfo, activeScanOffice);
 
   const [qty, setQty] = useState("");
   const [rak, setRak] = useState(1);
-  const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const navigate = useNavigate();
-  const [operatorName, setOperatorName] = useState(userInfo?.username);
+  const operatorName = userInfo?.username ?? "";
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error" | "info";
   } | null>(null);
+  const [rescanConfirm, setRescanConfirm] = useState<RescanConfirm | null>(
+    null,
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const queryClient = useQueryClient();
 
   const selectedSku = selectedProduct ? getProductSku(selectedProduct) : "";
 
   const skuScansQuery = useQuery({
-    queryKey: ["opname", "scans-for-rak", selectedLocation, selectedSku],
+    queryKey: ["opname", "scans-for-rak", activeScanOffice, selectedSku],
     queryFn: async () => {
       const res = await axiosInstance.get<ScanLogItem[]>("/api/opname/scans", {
-        params: { locationCode: selectedLocation, rak: "Semua" },
+        params: { office: activeScanOffice, rak: "Semua" },
       });
       const rows = Array.isArray(res.data) ? res.data : [];
       return rows.filter((row) => row.sku === selectedSku);
     },
-    enabled: Boolean(selectedLocation && selectedSku),
+    enabled: Boolean(activeScanOffice && selectedSku),
   });
 
-  //initialization
   useEffect(() => {
-    setSelectedLocation(getSavedLocation());
-  }, [locations?.length]);
+    if (!showOfficePicker || !fixedOffice) return;
+    setPickedOffice((prev) => prev || fixedOffice);
+  }, [showOfficePicker, fixedOffice]);
 
   useEffect(() => {
-    if (!selectedProduct || !selectedLocation) return;
-    const sku = getProductSku(selectedProduct);
-    if (!sku) return;
+    if (!showOfficePicker) return;
 
-    setRak(
-      getSuggestedNextRak(sku, selectedLocation, skuScansQuery.data ?? []),
-    );
-  }, [selectedProduct, selectedLocation, skuScansQuery.data]);
-
-  // Fetch operator user info on mount
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const res = await getUserInfo();
-        const user = res?.data || res;
-        const name = user?.username || user?.name || user?.usernameLdap;
-        if (name) {
-          setOperatorName(name);
-        }
-      } catch (err) {
-        console.error("Gagal mengambil info user:", err);
-      }
-    };
-    fetchUser();
-  }, []);
-
-  // Fetch locations on mount
-  useEffect(() => {
     const fetchLocations = async () => {
       setIsLoadingLocations(true);
       try {
         const res = await locationApi.getAllLocation("");
-        // Support array of locations
-        const resolveInitialLocation = (list: LocationItem[]) => {
-          const saved = getSavedLocation();
-          if (saved && list.some((loc) => loc.code === saved)) {
-            return saved;
-          }
-          return list[0]?.code || "";
-        };
-
         if (Array.isArray(res)) {
           setLocations(res);
-          if (res.length > 0) {
-            setSelectedLocation(resolveInitialLocation(res));
-          }
         } else if (res && Array.isArray(res.data)) {
           setLocations(res.data);
-          if (res.data.length > 0) {
-            setSelectedLocation(resolveInitialLocation(res.data));
-          }
+        } else {
+          setLocations([]);
         }
-      } catch (err) {
-        // Fallback mock locations
+      } catch {
         setLocations([]);
       } finally {
         setIsLoadingLocations(false);
       }
     };
+
     fetchLocations();
-  }, []);
+  }, [showOfficePicker]);
+
+  useEffect(() => {
+    if (!selectedProduct || !activeScanOffice) return;
+    const sku = getProductSku(selectedProduct);
+    if (!sku) return;
+
+    setRak(
+      getSuggestedNextRak(sku, activeScanOffice, skuScansQuery.data ?? []),
+    );
+  }, [selectedProduct, activeScanOffice, skuScansQuery.data]);
 
   // Search products when query changes
   useEffect(() => {
@@ -207,8 +184,8 @@ export default function Scan() {
         } else if (res && Array.isArray(res.data)) {
           setProducts(res.data);
         }
-      } catch (err) {
-        console.error("Gagal mencari produk:", err);
+      } catch {
+        setProducts([]);
       } finally {
         setIsSearchingProducts(false);
       }
@@ -225,10 +202,73 @@ export default function Scan() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const findExistingOperatorScan = () => {
+    if (!operatorName || !selectedSku || !activeScanOffice) return null;
+    const rakNum = Number(rak);
+    if (!rakNum || rakNum <= 0) return null;
+
+    const match = (skuScansQuery.data ?? []).find(
+      (row) =>
+        row.sku === selectedSku &&
+        Number(row.rak) === rakNum &&
+        row.operator === operatorName &&
+        (row.office == null || row.office === activeScanOffice),
+    );
+
+    return match?.qty != null ? match : null;
+  };
+
+  const submitScan = async () => {
+    if (!selectedProduct || !activeScanOffice) return;
+
+    setIsSaving(true);
+    try {
+      const response = await axiosInstance.post("/api/opname/scan", {
+        sku: selectedProduct.No || selectedProduct.sku || "",
+        name:
+          selectedProduct.Description ||
+          selectedProduct.Description_3 ||
+          selectedProduct.name ||
+          "",
+        rak: Number(rak),
+        qty: Number(qty),
+        ...(showOfficePicker ? { office: activeScanOffice } : {}),
+      });
+
+      if (response.data) {
+        showToast("Data scan berhasil disimpan ke database pusat!", "success");
+        await queryClient.invalidateQueries({
+          queryKey: ["opname", "scans-for-rak"],
+        });
+
+        const sku = getProductSku(selectedProduct);
+        setSelectedProduct(null);
+        setSearchQuery("");
+        setQty("");
+        if (typeof window !== "undefined") {
+          localStorage.setItem(
+            getRakStorageKey(sku, activeScanOffice),
+            String(Number(rak)),
+          );
+        }
+      }
+    } catch {
+      showToast("Gagal menyimpan data scan ke server", "error");
+    } finally {
+      setIsSaving(false);
+      setRescanConfirm(null);
+    }
+  };
+
   const handleSaveScan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLocation) {
-      showToast("Pilih wilayah terlebih dahulu!", "error");
+    if (!scanAllowed) {
+      showToast(
+        showOfficePicker
+          ? "Pilih wilayah/lokasi terlebih dahulu."
+          : "Akun tidak memiliki office. Scan tidak diizinkan untuk user ini.",
+        "error",
+      );
       return;
     }
     if (!selectedProduct) {
@@ -244,40 +284,17 @@ export default function Scan() {
       return;
     }
 
-    // Save to Postgres Database instead of Local Storage
-    try {
-      const response = await axiosInstance.post("/api/opname/scan", {
-        sku: selectedProduct.No || selectedProduct.sku || "",
-        name:
-          selectedProduct.Description ||
-          selectedProduct.Description_3 ||
-          selectedProduct.name ||
-          "",
+    const existing = findExistingOperatorScan();
+    if (existing?.qty != null) {
+      setRescanConfirm({
+        previousQty: existing.qty,
+        addedQty: Number(qty),
         rak: Number(rak),
-        qty: Number(qty),
-        operator: operatorName,
-        locationCode: selectedLocation,
       });
-
-      if (response.data) {
-        showToast("Data scan berhasil disimpan ke database pusat!", "success");
-
-        // Reset form fields except location
-        setSelectedProduct(null);
-        setSearchQuery("");
-        setQty("");
-        const sku = getProductSku(selectedProduct);
-        if (typeof window !== "undefined") {
-          localStorage.setItem(
-            getRakStorageKey(sku, selectedLocation),
-            String(Number(rak)),
-          );
-          saveLocation(selectedLocation);
-        }
-      }
-    } catch (err) {
-      showToast("Gagal menyimpan data scan ke server", "error");
+      return;
     }
+
+    await submitScan();
   };
 
   useEffect(() => {
@@ -294,12 +311,14 @@ export default function Scan() {
       {/* Header */}
       <header className="relative z-10 border-b border-slate-200/80 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
-          <Link
-            to="/admin"
-            className="p-2 hover:bg-slate-100 rounded-xl transition-all duration-200 text-slate-500 hover:text-slate-800"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
+          {canAccessAdmin(userInfo) && (
+            <Link
+              to="/admin"
+              className="p-2 hover:bg-slate-100 rounded-xl transition-all duration-200 text-slate-500 hover:text-slate-800"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          )}
           <div>
             <h1 className="text-base font-bold text-slate-900">
               Input Hasil Scan
@@ -350,232 +369,300 @@ export default function Scan() {
           </h2>
 
           <form onSubmit={handleSaveScan} className="space-y-6">
-            {/* Dropdown Wilayah */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Pilih Wilayah / Lokasi
-              </label>
-              <div className="relative">
-                <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
-                <select
-                  value={selectedLocation}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setSelectedLocation(value);
-                    if (value) saveLocation(value);
-                  }}
-                  disabled={isLoadingLocations}
-                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-bold text-slate-800 rounded-2xl pl-10 pr-4 py-3.5 appearance-none cursor-pointer outline-none transition-all duration-150"
-                >
-                  {isLoadingLocations ? (
-                    <option>Memuat wilayah...</option>
-                  ) : (
-                    <>
-                      <option key={null} value="">
-                        Pilih Location Dulu
-                      </option>
-                      {locations.map((loc) => (
-                        <option key={loc.code} value={loc.code}>
-                          {loc.name || loc.description || loc.code}
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </select>
-                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none border-l border-slate-200 pl-2">
-                  <div className="border-4 border-transparent border-t-slate-400 w-0 h-0" />
-                </div>
-              </div>
-            </div>
-
-            {/* Input Cari Data */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Cari Data (SKU / Nama Barang)
-              </label>
-              <div className="relative flex items-center">
-                <Search className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Masukkan SKU atau Nama barang..."
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    if (selectedProduct) setSelectedProduct(null);
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchQuery("");
-                      setSelectedProduct(null);
-                      setProducts([]);
-                    }}
-                    className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
+            {showOfficePicker ? (
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Pilih Wilayah / Lokasi
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <select
+                    value={pickedOffice}
+                    onChange={(e) => setPickedOffice(e.target.value)}
+                    disabled={isLoadingLocations}
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-bold text-slate-800 rounded-2xl pl-10 pr-4 py-3.5 appearance-none cursor-pointer outline-none transition-all duration-150"
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                    {isLoadingLocations ? (
+                      <option value="">Memuat wilayah...</option>
+                    ) : (
+                      <>
+                        <option value="">Pilih Location Dulu</option>
+                        {locations.map((loc) => (
+                          <option key={loc.code} value={loc.code}>
+                            {loc.name || loc.description || loc.code}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </div>
               </div>
-
-              {/* Product search suggestions dropdown */}
-              {searchQuery && !selectedProduct && (
-                <div className="border border-slate-200 rounded-2xl bg-white shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100 z-20 relative">
-                  {isSearchingProducts ? (
-                    <div className="p-4 text-center text-xs text-slate-400 font-medium">
-                      Mencari barang...
-                    </div>
-                  ) : products.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-slate-400 font-medium">
-                      Barang tidak ditemukan
-                    </div>
-                  ) : (
-                    products.map((p) => (
-                      <button
-                        key={p._id || p.No || p.id || p.sku}
-                        type="button"
-                        onClick={() => {
-                          setSelectedProduct(p);
-                          setSearchQuery(
-                            p.Description || p.Description_3 || p.name || "",
-                          );
-                        }}
-                        className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between text-xs"
-                      >
-                        <div className="pr-4">
-                          <p className="font-bold text-slate-800 line-clamp-1">
-                            {p.Description || p.Description_3 || p.name}
-                          </p>
-                          <span className="text-[10px] font-mono text-slate-500 font-medium">
-                            SKU: {p.No || p.sku}
-                          </span>
-                        </div>
-                        <Hash className="h-3.5 w-3.5 text-indigo-500 shrink-0 opacity-60" />
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {/* Selected product banner */}
-              {selectedProduct && (
-                <div className="p-3 rounded-2xl bg-indigo-50/50 border border-indigo-150/80 flex items-center justify-between">
-                  <div className="text-xs">
-                    <p className="font-extrabold text-indigo-950 line-clamp-1">
-                      {selectedProduct.Description ||
-                        selectedProduct.Description_3 ||
-                        selectedProduct.name}
-                    </p>
-                    <p className="text-[10px] font-mono text-indigo-600 font-bold mt-0.5">
-                      SKU: {selectedProduct.No || selectedProduct.sku}
-                    </p>
-                  </div>
-                  <span className="text-[9px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold border border-indigo-200">
-                    Terpilih
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Input RAK */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Nomor Rak (Lokasi Penyimpanan)
-              </label>
-              {selectedProduct && selectedLocation && (
-                <p className="text-[10px] text-indigo-600 font-semibold">
-                  Rak disarankan untuk SKU &amp; wilayah ini:{" "}
-                  <span className="font-black">{rak}</span>
-                  {getLastRakFromStorage(
-                    getProductSku(selectedProduct),
-                    selectedLocation,
-                  ) > 0 && (
-                    <span className="text-slate-500 font-medium">
-                      {" "}
-                      (terakhir: rak{" "}
-                      {getLastRakFromStorage(
-                        getProductSku(selectedProduct),
-                        selectedLocation,
-                      )}
-                      )
-                    </span>
-                  )}
+            ) : !scanAllowed ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                <p className="font-bold">Scan tidak tersedia</p>
+                <p className="mt-1 text-amber-800/90">
+                  Akun Anda belum memiliki office. Hubungi admin untuk
+                  menambahkan office pada profil user.
                 </p>
-              )}
-              <div className="relative flex items-center">
-                <MapPin className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
-                <input
-                  type="number"
-                  placeholder="Masukkan Nomor Rak (contoh: 1, 2, 3)..."
-                  value={rak}
-                  onChange={(e) => setRak(Number(e.target.value))}
-                  min={1}
-                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
-                />
-                {rak && (
-                  <button
-                    type="button"
-                    onClick={() => setRak(1)}
-                    className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Wilayah / Lokasi
+                </label>
+                <div className="relative">
+                  <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-indigo-500 pointer-events-none" />
+                  <div className="w-full bg-indigo-50/60 border border-indigo-100 text-xs font-bold text-indigo-900 rounded-2xl pl-10 pr-4 py-3.5">
+                    {activeScanOffice}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <fieldset
+              disabled={!scanAllowed}
+              className="space-y-6 disabled:opacity-60"
+            >
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Cari Data (SKU / Nama Barang)
+                </label>
+                <div className="relative flex items-center">
+                  <Search className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Masukkan SKU atau Nama barang..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      if (selectedProduct) setSelectedProduct(null);
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSelectedProduct(null);
+                        setProducts([]);
+                      }}
+                      className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Product search suggestions dropdown */}
+                {searchQuery && !selectedProduct && (
+                  <div className="border border-slate-200 rounded-2xl bg-white shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100 z-20 relative">
+                    {isSearchingProducts ? (
+                      <div className="p-4 text-center text-xs text-slate-400 font-medium">
+                        Mencari barang...
+                      </div>
+                    ) : products.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400 font-medium">
+                        Barang tidak ditemukan
+                      </div>
+                    ) : (
+                      products.map((p) => (
+                        <button
+                          key={p._id || p.No || p.id || p.sku}
+                          type="button"
+                          onClick={() => {
+                            setSelectedProduct(p);
+                            setSearchQuery(
+                              p.Description || p.Description_3 || p.name || "",
+                            );
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between text-xs"
+                        >
+                          <div className="pr-4">
+                            <p className="font-bold text-slate-800 line-clamp-1">
+                              {p.Description || p.Description_3 || p.name}
+                            </p>
+                            <span className="text-[10px] font-mono text-slate-500 font-medium">
+                              SKU: {p.No || p.sku}
+                            </span>
+                          </div>
+                          <Hash className="h-3.5 w-3.5 text-indigo-500 shrink-0 opacity-60" />
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Selected product banner */}
+                {selectedProduct && (
+                  <div className="p-3 rounded-2xl bg-indigo-50/50 border border-indigo-150/80 flex items-center justify-between">
+                    <div className="text-xs">
+                      <p className="font-extrabold text-indigo-950 line-clamp-1">
+                        {selectedProduct.Description ||
+                          selectedProduct.Description_3 ||
+                          selectedProduct.name}
+                      </p>
+                      <p className="text-[10px] font-mono text-indigo-600 font-bold mt-0.5">
+                        SKU: {selectedProduct.No || selectedProduct.sku}
+                      </p>
+                    </div>
+                    <span className="text-[9px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold border border-indigo-200">
+                      Terpilih
+                    </span>
+                  </div>
                 )}
               </div>
-            </div>
 
-            {/* Input QTY */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                QTY Fisik Lapangan (Jumlah)
-              </label>
-              <div className="relative flex items-center">
-                <Hash className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
-                <input
-                  type="number"
-                  placeholder="Masukkan QTY..."
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                  min="1"
-                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
-                />
-                {qty && (
-                  <button
-                    type="button"
-                    onClick={() => setQty("")}
-                    className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+              {/* Input RAK */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Nomor Rak (Lokasi Penyimpanan)
+                </label>
+                {selectedProduct && activeScanOffice && (
+                  <p className="text-[10px] text-indigo-600 font-semibold">
+                    Rak disarankan untuk SKU &amp; wilayah ini:{" "}
+                    <span className="font-black">{rak}</span>
+                    {getLastRakFromStorage(
+                      getProductSku(selectedProduct),
+                      activeScanOffice,
+                    ) > 0 && (
+                      <span className="text-slate-500 font-medium">
+                        {" "}
+                        (terakhir: rak{" "}
+                        {getLastRakFromStorage(
+                          getProductSku(selectedProduct),
+                          activeScanOffice,
+                        )}
+                        )
+                      </span>
+                    )}
+                  </p>
                 )}
+                <div className="relative flex items-center">
+                  <MapPin className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="number"
+                    placeholder="Masukkan Nomor Rak (contoh: 1, 2, 3)..."
+                    value={rak}
+                    onChange={(e) => setRak(Number(e.target.value))}
+                    min={1}
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                  />
+                  {rak && (
+                    <button
+                      type="button"
+                      onClick={() => setRak(1)}
+                      className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Buttons */}
-            <div className="pt-2 flex gap-3">
-              <button
-                onClick={() => {
-                  setSelectedProduct(null);
-                  setSearchQuery("");
-                  setQty("");
-                  setRak(1);
-                }}
-                className="flex-1 text-center py-3.5 border border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:text-slate-800 text-xs font-bold rounded-2xl transition-all duration-150 active:scale-98"
-              >
-                Clear Form
-              </button>
-              <button
-                type="submit"
-                className="flex-2 py-3.5 bg-linear-to-r from-indigo-500 to-indigo-650 hover:from-indigo-450 hover:to-indigo-600 text-white text-xs font-bold rounded-2xl shadow-lg shadow-indigo-500/10 transition-all duration-150 active:scale-98"
-              >
-                Simpan Hasil Scan
-              </button>
-            </div>
+              {/* Input QTY */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  QTY Fisik Lapangan (Jumlah)
+                </label>
+                <div className="relative flex items-center">
+                  <Hash className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="number"
+                    placeholder="Masukkan QTY..."
+                    value={qty}
+                    onChange={(e) => setQty(e.target.value)}
+                    min="1"
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                  />
+                  {qty && (
+                    <button
+                      type="button"
+                      onClick={() => setQty("")}
+                      className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="pt-2 flex gap-3">
+                <button
+                  onClick={() => {
+                    setSelectedProduct(null);
+                    setSearchQuery("");
+                    setQty("");
+                    setRak(1);
+                  }}
+                  className="flex-1 text-center py-3.5 border border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:text-slate-800 text-xs font-bold rounded-2xl transition-all duration-150 active:scale-98"
+                >
+                  Clear Form
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving || !scanAllowed}
+                  className="flex-2 py-3.5 bg-linear-to-r from-indigo-500 to-indigo-650 hover:from-indigo-450 hover:to-indigo-600 text-white text-xs font-bold rounded-2xl shadow-lg shadow-indigo-500/10 transition-all duration-150 active:scale-98 disabled:opacity-60"
+                >
+                  {isSaving ? "Menyimpan..." : "Simpan Hasil Scan"}
+                </button>
+              </div>
+            </fieldset>
           </form>
         </div>
       </main>
+
+      {rescanConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl border border-amber-200 shadow-xl max-w-md w-full p-5"
+          >
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600 shrink-0">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">
+                  Anda sebelumnya telah menambahkan item tersebut
+                </p>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Rak {rescanConfirm.rak}: qty sebelumnya{" "}
+                  <span className="font-bold text-slate-700">
+                    {rescanConfirm.previousQty}
+                  </span>
+                  . Qty baru akan <span className="font-bold">ditambahkan</span>{" "}
+                  menjadi{" "}
+                  <span className="font-bold text-indigo-700">
+                    {rescanConfirm.previousQty + rescanConfirm.addedQty}
+                  </span>
+                  .
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setRescanConfirm(null)}
+                disabled={isSaving}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => submitScan()}
+                disabled={isSaving}
+              >
+                Lanjutkan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

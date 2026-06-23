@@ -1,7 +1,7 @@
 import axiosInstance from "./axios-instance";
 
 export type CompareQueryParams = {
-  locationCode: string;
+  office: string;
   rak?: string;
   search?: string;
 };
@@ -10,7 +10,7 @@ export type ScanCompareRow = {
   sku: string;
   name: string;
   rak: number;
-  locationCode: string;
+  office: string;
   match: boolean;
   resolved: boolean;
   approvedQty: number | null;
@@ -31,7 +31,7 @@ export type NavCompareRow = {
   physicalQty: number;
   systemQty: number;
   status: string;
-  locationCode: string;
+  office: string;
   updatedAt: string;
   resolvedRakCount: number;
   pendingRakCount: number;
@@ -39,7 +39,7 @@ export type NavCompareRow = {
 
 function toCompareParams(params: CompareQueryParams) {
   return {
-    locationCode: params.locationCode,
+    office: params.office,
     rak: params.rak ?? "Semua",
     search: params.search ?? "",
   };

@@ -7,10 +7,7 @@ import opnameRouter, { startOpnameCron } from "./routes/opname.route.js";
 import compareRouter from "./routes/compare.router.js";
 import authenticate from "./middlewares/authenticate.middleware.js";
 import { connectDB } from "./config/db.js";
-const isProduction = process.env.NODE_ENV === "production";
-const corsOrigin = isProduction
-    ? [process.env.FRONT_END || ""]
-    : ["http://192.168.169.12:5173"];
+const corsOrigin = process.env.FRONT_END;
 const app = express();
 // Middlewares
 app.use(express.json());
