@@ -30,6 +30,10 @@ export function canAccessAdmin(user: UserInfo | null | undefined): boolean {
   return isAdmin(user) || isOwner(user);
 }
 
+export function adminCanPickOffice(user: UserInfo | null | undefined): boolean {
+  return isAdmin(user) || isOwner(user);
+}
+
 export function userOffice(user: UserInfo | null | undefined): string {
   return user?.office?.trim() ?? "";
 }
@@ -54,11 +58,8 @@ export function compareOfficeScope(
   user: UserInfo | null | undefined,
   pickedOffice?: string,
 ): string {
-  if (isOwner(user)) {
+  if (isOwner(user) || isAdmin(user)) {
     return pickedOffice?.trim() || "Semua";
-  }
-  if (isAdmin(user)) {
-    return "Semua";
   }
   return userOffice(user);
 }

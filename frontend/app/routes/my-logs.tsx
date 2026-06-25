@@ -19,6 +19,7 @@ import {
   isOwner,
   userSessionLabel,
 } from "~/libs/user-access";
+import { normalizeLocationList, type LocationItem } from "~/libs/location";
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -43,9 +44,7 @@ export default function MyLogsPage() {
   const { userInfo } = useUserInfo();
   const showOfficePicker = isOwner(userInfo);
   const [pickedOffice, setPickedOffice] = useState("Semua");
-  const [locations, setLocations] = useState<
-    { code: string; name?: string; description?: string }[]
-  >([]);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRak, setSelectedRak] = useState("Semua");
@@ -80,11 +79,7 @@ export default function MyLogsPage() {
       setIsLoadingLocations(true);
       try {
         const res = await locationApi.getAllLocation("");
-        if (Array.isArray(res)) {
-          setLocations(res);
-        } else if (res && Array.isArray(res.data)) {
-          setLocations(res.data);
-        }
+        setLocations(normalizeLocationList(res));
       } catch {
         setLocations([]);
       } finally {

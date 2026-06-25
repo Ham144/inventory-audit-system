@@ -17,6 +17,7 @@ import {
   sumApprovedQtyForSkuLocation,
   toOperatorScanEntries,
   toScanGroups,
+  reconcileApprovalAfterGroupChange,
   toScanGroup,
   readOffice,
   tryAutoApproveUnanimousGroup,
@@ -464,6 +465,143 @@ router.post("/scan/approve", async (req: Request, res: Response) => {
     );
 
     return res.json(row ?? null);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+async function findScanCompareRowForScan(scan: {
+  sessionId: string;
+  sku: string;
+  rak: number;
+  office: string;
+}) {
+  const rows = await buildScanCompareRows({ sessionId: scan.sessionId });
+  return (
+    rows.find(
+      (r) =>
+        r.sku === scan.sku && r.rak === scan.rak && r.office === scan.office,
+    ) ?? null
+  );
+}
+
+async function assertAdminScanMutation(req: Request, scanLogId: string) {
+  const appUser = await resolveAppUser(
+    req as Request & { user?: Record<string, unknown> },
+  );
+  if (!canAccessAdmin(appUser)) {
+    return {
+      ok: false as const,
+      status: 403,
+      error: "Hanya admin atau owner yang dapat mengubah scan",
+    };
+  }
+
+  const scan = await prisma.scanLog.findUnique({
+    where: { id: scanLogId },
+  });
+  if (!scan) {
+    return { ok: false as const, status: 404, error: "Scan tidak ditemukan" };
+  }
+
+  const session = await prisma.opnameSession.findUnique({
+    where: { id: scan.sessionId },
+  });
+  if (!session || session.status !== "ONGOING") {
+    return {
+      ok: false as const,
+      status: 400,
+      error: "Sesi opname tidak aktif",
+    };
+  }
+
+  return { ok: true as const, scan, scanGroup: toScanGroup(scan) };
+}
+
+router.patch("/scan/:scanLogId", async (req: Request, res: Response) => {
+  try {
+    const scanLogId = String(req.params.scanLogId);
+    const access = await assertAdminScanMutation(req, scanLogId);
+    if (!access.ok) {
+      return res.status(access.status).json({ error: access.error });
+    }
+
+    const { qty } = req.body as { qty?: number | string };
+    const qtyNum = Number(qty);
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isInteger(qtyNum)) {
+      return res.status(400).json({ error: "qty harus bilangan bulat positif" });
+    }
+
+    const updated = await prisma.scanLog.update({
+      where: { id: scanLogId },
+      data: { qty: qtyNum },
+    });
+
+    const groupScans = await prisma.scanLog.findMany({
+      where: {
+        sessionId: updated.sessionId,
+        sku: updated.sku,
+        rak: updated.rak,
+        office: access.scanGroup.office,
+      },
+    });
+
+    await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
+
+    const row = await findScanCompareRowForScan({
+      sessionId: updated.sessionId,
+      sku: updated.sku,
+      rak: updated.rak,
+      office: access.scanGroup.office,
+    });
+
+    return res.json(row);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.delete("/scan/:scanLogId", async (req: Request, res: Response) => {
+  try {
+    const scanLogId = String(req.params.scanLogId);
+    const access = await assertAdminScanMutation(req, scanLogId);
+    if (!access.ok) {
+      return res.status(access.status).json({ error: access.error });
+    }
+
+    const { scan, scanGroup } = access;
+
+    await prisma.scanLog.delete({ where: { id: scanLogId } });
+
+    const groupScans = await prisma.scanLog.findMany({
+      where: {
+        sessionId: scan.sessionId,
+        sku: scan.sku,
+        rak: scan.rak,
+        office: scanGroup.office,
+      },
+    });
+
+    if (groupScans.length === 0) {
+      await deleteGroupApproval(
+        scan.sessionId,
+        scan.sku,
+        scan.rak,
+        scanGroup.office,
+      );
+      return res.json(null);
+    }
+
+    await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
+
+    const row = await findScanCompareRowForScan({
+      sessionId: scan.sessionId,
+      sku: scan.sku,
+      rak: scan.rak,
+      office: scanGroup.office,
+    });
+
+    return res.json(row);
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }

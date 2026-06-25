@@ -34,6 +34,7 @@ import {
   setAppTheme,
   type AppTheme,
 } from "~/libs/app-prefs";
+import { normalizeLocationList, type LocationItem } from "~/libs/location";
 
 const ROLE_LABELS: Record<AppRole, string> = {
   operator: "Operator",
@@ -57,9 +58,7 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<AppTheme>(() => getAppTheme());
   const [adminOffice, setAdminOffice] = useState(() => getAdminDefaultOffice());
-  const [locations, setLocations] = useState<
-    { code: string; name?: string; description?: string }[]
-  >([]);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "warning";
@@ -134,11 +133,7 @@ export default function SettingsPage() {
     const fetchLocations = async () => {
       try {
         const res = await locationApi.getAllLocation("");
-        if (Array.isArray(res)) {
-          setLocations(res);
-        } else if (res && Array.isArray(res.data)) {
-          setLocations(res.data);
-        }
+        setLocations(normalizeLocationList(res));
       } catch {
         setLocations([]);
       }

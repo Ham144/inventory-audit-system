@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { redirect, useNavigate } from "react-router";
 import {
   MapPin,
@@ -19,14 +19,9 @@ import {
   isOwner,
   userOffice,
 } from "~/libs/user-access";
+import { normalizeLocationList, type LocationItem } from "~/libs/location";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppNavigation } from "~/components/AppNavigation";
-
-interface LocationItem {
-  code: string;
-  name?: string;
-  description?: string;
-}
 
 interface ProductItem {
   id?: string;
@@ -70,17 +65,15 @@ function getLastRakFromStorage(sku: string, office: string): number {
   return Number.isFinite(lastRak) && lastRak >= 1 ? lastRak : 0;
 }
 
-function getSuggestedNextRak(
+function getPreferredRak(
   sku: string,
   office: string,
-  scans: ScanLogItem[],
+  currentRak: number,
 ): number {
   const lastFromStorage = getLastRakFromStorage(sku, office);
-  const maxFromDb =
-    scans.length > 0 ? Math.max(...scans.map((s) => Number(s.rak) || 0)) : 0;
-  const nextFromStorage = lastFromStorage > 0 ? lastFromStorage + 1 : 1;
-  const nextFromDb = maxFromDb > 0 ? maxFromDb + 1 : 1;
-  return Math.max(nextFromStorage, nextFromDb);
+  if (lastFromStorage > 0) return lastFromStorage;
+  if (Number.isFinite(currentRak) && currentRak >= 1) return currentRak;
+  return 1;
 }
 
 export default function Scan() {
@@ -99,7 +92,8 @@ export default function Scan() {
   const scanAllowed = canScan(userInfo, activeScanOffice);
 
   const [qty, setQty] = useState("");
-  const [rak, setRak] = useState(1);
+  const [rak, setRak] = useState("1");
+  const lastSelectedSkuRef = useRef("");
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const navigate = useNavigate();
   const operatorName = userInfo?.username ?? "";
@@ -140,13 +134,7 @@ export default function Scan() {
       setIsLoadingLocations(true);
       try {
         const res = await locationApi.getAllLocation("");
-        if (Array.isArray(res)) {
-          setLocations(res);
-        } else if (res && Array.isArray(res.data)) {
-          setLocations(res.data);
-        } else {
-          setLocations([]);
-        }
+        setLocations(normalizeLocationList(res));
       } catch {
         setLocations([]);
       } finally {
@@ -161,11 +149,16 @@ export default function Scan() {
     if (!selectedProduct || !activeScanOffice) return;
     const sku = getProductSku(selectedProduct);
     if (!sku) return;
+    if (sku === lastSelectedSkuRef.current) return;
 
-    setRak(
-      getSuggestedNextRak(sku, activeScanOffice, skuScansQuery.data ?? []),
+    lastSelectedSkuRef.current = sku;
+    const preferred = getPreferredRak(
+      sku,
+      activeScanOffice,
+      Number(rak) || 0,
     );
-  }, [selectedProduct, activeScanOffice, skuScansQuery.data]);
+    setRak(String(preferred));
+  }, [selectedProduct, activeScanOffice]);
 
   // Search products when query changes
   useEffect(() => {
@@ -244,6 +237,7 @@ export default function Scan() {
         setSelectedProduct(null);
         setSearchQuery("");
         setQty("");
+        lastSelectedSkuRef.current = "";
         if (typeof window !== "undefined") {
           localStorage.setItem(
             getRakStorageKey(sku, activeScanOffice),
@@ -531,22 +525,13 @@ export default function Scan() {
                 </label>
                 {selectedProduct && activeScanOffice && (
                   <p className="text-[10px] text-indigo-600 font-semibold">
-                    Rak disarankan untuk SKU &amp; wilayah ini:{" "}
-                    <span className="font-black">{rak}</span>
-                    {getLastRakFromStorage(
-                      getProductSku(selectedProduct),
-                      activeScanOffice,
-                    ) > 0 && (
-                      <span className="text-slate-500 font-medium">
-                        {" "}
-                        (terakhir: rak{" "}
-                        {getLastRakFromStorage(
-                          getProductSku(selectedProduct),
-                          activeScanOffice,
-                        )}
-                        )
-                      </span>
-                    )}
+                    Rak terakhir untuk SKU &amp; wilayah ini:{" "}
+                    <span className="font-black">
+                      {getLastRakFromStorage(
+                        getProductSku(selectedProduct),
+                        activeScanOffice,
+                      ) || rak}
+                    </span>
                   </p>
                 )}
                 <div className="relative flex items-center">
@@ -555,14 +540,14 @@ export default function Scan() {
                     type="number"
                     placeholder="Masukkan Nomor Rak (contoh: 1, 2, 3)..."
                     value={rak}
-                    onChange={(e) => setRak(Number(e.target.value))}
+                    onChange={(e) => setRak(e.target.value)}
                     min={1}
                     className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                   />
                   {rak && (
                     <button
                       type="button"
-                      onClick={() => setRak(1)}
+                      onClick={() => setRak("1")}
                       className="absolute right-3.5 p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200 transition-all duration-150"
                     >
                       <X className="h-3.5 w-3.5" />
@@ -605,7 +590,7 @@ export default function Scan() {
                     setSelectedProduct(null);
                     setSearchQuery("");
                     setQty("");
-                    setRak(1);
+                    setRak("1");
                   }}
                   className="flex-1 text-center py-3.5 border border-slate-200 hover:border-slate-300 bg-white text-slate-600 hover:text-slate-800 text-xs font-bold rounded-2xl transition-all duration-150 active:scale-98"
                 >

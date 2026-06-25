@@ -19,6 +19,8 @@ import {
   Calendar,
   Download,
   StickyNote,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { redirect } from "react-router";
 import axiosInstance from "../api/axios-instance";
@@ -27,11 +29,16 @@ import { useUserInfo } from "../store";
 import {
   canAccessAdmin,
   compareOfficeScope,
+  adminCanPickOffice,
   isAdmin,
-  isOwner,
   userSessionLabel,
 } from "~/libs/user-access";
-import { getAdminDefaultOffice } from "~/libs/app-prefs";
+import { getAdminDefaultOffice, setAdminDefaultOffice } from "~/libs/app-prefs";
+import {
+  normalizeLocationList,
+  resolvePickedOffice,
+  type LocationItem,
+} from "~/libs/location";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   CompareApi,
@@ -66,7 +73,10 @@ function extractApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function resolveDateRangeError(dateFrom: string, dateTo: string): string | null {
+function resolveDateRangeError(
+  dateFrom: string,
+  dateTo: string,
+): string | null {
   if (!dateFrom || !dateTo) {
     return "Tanggal dari dan sampai wajib diisi";
   }
@@ -319,12 +329,20 @@ function NavRowExpandedPanel({
   onApprove,
   isApproving,
   approvingScanId,
+  onUpdateQty,
+  onDeleteScan,
+  isMutatingScan,
+  mutatingScanId,
   compact = false,
 }: {
   rakDetails: ScanCompareRow[];
   onApprove: (scanLogId: string) => void;
   isApproving: boolean;
   approvingScanId?: string;
+  onUpdateQty: (scanLogId: string, qty: number) => void;
+  onDeleteScan: (scanLogId: string) => void;
+  isMutatingScan: boolean;
+  mutatingScanId?: string;
   compact?: boolean;
 }) {
   return (
@@ -351,6 +369,10 @@ function NavRowExpandedPanel({
               onApprove={onApprove}
               isApproving={isApproving}
               approvingScanId={approvingScanId}
+              onUpdateQty={onUpdateQty}
+              onDeleteScan={onDeleteScan}
+              isMutatingScan={isMutatingScan}
+              mutatingScanId={mutatingScanId}
             />
           ))}
         </div>
@@ -402,11 +424,11 @@ function NavNoteButton({
       </button>
       {open && (
         <dialog className="modal modal-open z-50">
-          <div className="modal-box max-w-sm">
+          <div className="modal-box max-w-sm bg-white">
             <h3 className="font-bold text-sm text-slate-800">Catatan</h3>
             <p className="text-[10px] font-mono text-slate-500 mt-0.5">{sku}</p>
             <textarea
-              className="textarea textarea-bordered w-full mt-3 text-sm min-h-[100px]"
+              className="textarea textarea-bordered w-full mt-3 text-sm min-h-[100px] bg-white text-slate-800 border-slate-200"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Tulis catatan untuk barang ini..."
@@ -457,6 +479,10 @@ function NavCompareItem({
   onApprove,
   isApproving,
   approvingScanId,
+  onUpdateQty,
+  onDeleteScan,
+  isMutatingScan,
+  mutatingScanId,
 }: {
   nav: ProductCompare;
   rakDetails: ScanCompareRow[];
@@ -469,6 +495,10 @@ function NavCompareItem({
   onApprove: (scanLogId: string) => void;
   isApproving: boolean;
   approvingScanId?: string;
+  onUpdateQty: (scanLogId: string, qty: number) => void;
+  onDeleteScan: (scanLogId: string) => void;
+  isMutatingScan: boolean;
+  mutatingScanId?: string;
 }) {
   const delta = navDelta(nav);
   const canCompareNav = nav.pendingRakCount === 0;
@@ -669,6 +699,10 @@ function NavCompareItem({
           onApprove={onApprove}
           isApproving={isApproving}
           approvingScanId={approvingScanId}
+          onUpdateQty={onUpdateQty}
+          onDeleteScan={onDeleteScan}
+          isMutatingScan={isMutatingScan}
+          mutatingScanId={mutatingScanId}
           compact
         />
       )}
@@ -681,12 +715,47 @@ function RakDetailRow({
   onApprove,
   isApproving,
   approvingScanId,
+  onUpdateQty,
+  onDeleteScan,
+  isMutatingScan,
+  mutatingScanId,
 }: {
   item: ScanCompareRow;
   onApprove: (scanLogId: string) => void;
   isApproving: boolean;
   approvingScanId?: string;
+  onUpdateQty: (scanLogId: string, qty: number) => void;
+  onDeleteScan: (scanLogId: string) => void;
+  isMutatingScan: boolean;
+  mutatingScanId?: string;
 }) {
+  const [editingScan, setEditingScan] = useState<{
+    id: string;
+    operator: string;
+    qty: number;
+  } | null>(null);
+  const [draftQty, setDraftQty] = useState("");
+
+  const openEdit = (scan: { id: string; operator: string; qty: number }) => {
+    setEditingScan(scan);
+    setDraftQty(String(scan.qty));
+  };
+
+  const submitEdit = () => {
+    if (!editingScan) return;
+    const qty = Number(draftQty);
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) return;
+    onUpdateQty(editingScan.id, qty);
+    setEditingScan(null);
+  };
+
+  const handleDelete = (scanId: string, operator: string) => {
+    const ok = window.confirm(
+      `Hapus scan ${operator}? Tindakan ini tidak dapat dibatalkan.`,
+    );
+    if (ok) onDeleteScan(scanId);
+  };
+
   return (
     <div
       className={`rounded-xl border p-2.5 sm:p-3 ${
@@ -731,7 +800,7 @@ function RakDetailRow({
               <span className="text-slate-600 font-semibold truncate">
                 {scan.operator}
               </span>
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 <span
                   className={`text-xs font-black ${
                     item.match ? "text-slate-800" : "text-red-700"
@@ -739,6 +808,26 @@ function RakDetailRow({
                 >
                   {scan.qty} pcs
                 </span>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-ghost text-slate-500"
+                  disabled={isMutatingScan && mutatingScanId === scan.id}
+                  onClick={() => openEdit(scan)}
+                  title="Edit qty"
+                  aria-label="Edit qty"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-ghost text-red-500"
+                  disabled={isMutatingScan && mutatingScanId === scan.id}
+                  onClick={() => handleDelete(scan.id, scan.operator)}
+                  title="Hapus scan"
+                  aria-label="Hapus scan"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
                 {showApprove && (
                   <button
                     type="button"
@@ -754,6 +843,49 @@ function RakDetailRow({
           );
         })}
       </div>
+      {editingScan && (
+        <dialog className="modal modal-open z-50">
+          <div className="modal-box max-w-xs bg-white">
+            <h3 className="font-bold text-sm text-slate-800">Edit Qty Scan</h3>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              {editingScan.operator} · Rak {item.rak}
+            </p>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              className="input input-bordered input-sm w-full mt-3 bg-white text-slate-800 border-slate-200"
+              value={draftQty}
+              onChange={(e) => setDraftQty(e.target.value)}
+            />
+            <div className="modal-action mt-2">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setEditingScan(null)}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={isMutatingScan && mutatingScanId === editingScan.id}
+                onClick={submitEdit}
+              >
+                {isMutatingScan && mutatingScanId === editingScan.id
+                  ? "Menyimpan..."
+                  : "Simpan"}
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="modal-backdrop"
+            aria-label="Tutup"
+            onClick={() => setEditingScan(null)}
+          />
+        </dialog>
+      )}
     </div>
   );
 }
@@ -845,20 +977,26 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
 
 export default function Home() {
   const { userInfo } = useUserInfo();
-  const showOfficePicker = isOwner(userInfo);
+  const showOfficePicker = adminCanPickOffice(userInfo);
   const [pickedOffice, setPickedOffice] = useState(() => {
     if (typeof window === "undefined") return "Semua";
     const saved = getAdminDefaultOffice();
     return saved || "Semua";
   });
-  const [locations, setLocations] = useState<
-    { code: string; name?: string; description?: string }[]
-  >([]);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const compareOffice = compareOfficeScope(
     userInfo,
     showOfficePicker ? pickedOffice : undefined,
   );
+
+  useEffect(() => {
+    if (!showOfficePicker || locations.length === 0) return;
+    const resolved = resolvePickedOffice(pickedOffice, locations);
+    if (resolved !== pickedOffice) {
+      setPickedOffice(resolved);
+    }
+  }, [showOfficePicker, locations, pickedOffice]);
   const [selectedRak, setSelectedRak] = useState("Semua");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1039,6 +1177,34 @@ export default function Home() {
     },
   });
 
+  const updateScanMutation = useMutation({
+    mutationFn: ({ scanLogId, qty }: { scanLogId: string; qty: number }) =>
+      CompareApi.updateScanQty(scanLogId, qty),
+    onSuccess: () => {
+      invalidateCompareQueries();
+      showToast("Qty scan diperbarui", "success");
+    },
+    onError: (err) => {
+      showToast(extractApiError(err, "Gagal memperbarui qty scan"), "warning");
+    },
+  });
+
+  const deleteScanMutation = useMutation({
+    mutationFn: (scanLogId: string) => CompareApi.deleteScanLog(scanLogId),
+    onSuccess: () => {
+      invalidateCompareQueries();
+      showToast("Scan dihapus", "success");
+    },
+    onError: (err) => {
+      showToast(extractApiError(err, "Gagal menghapus scan"), "warning");
+    },
+  });
+
+  const isMutatingScan =
+    updateScanMutation.isPending || deleteScanMutation.isPending;
+  const mutatingScanId =
+    updateScanMutation.variables?.scanLogId ?? deleteScanMutation.variables;
+
   const checkNavMutation = useMutation({
     mutationFn: (compareItemId: string) =>
       CompareApi.checkNavItem(compareItemId),
@@ -1094,13 +1260,7 @@ export default function Home() {
       setIsLoadingLocations(true);
       try {
         const res = await locationApi.getAllLocation("");
-        if (Array.isArray(res)) {
-          setLocations(res);
-        } else if (res && Array.isArray(res.data)) {
-          setLocations(res.data);
-        } else {
-          setLocations([]);
-        }
+        setLocations(normalizeLocationList(res));
       } catch {
         setLocations([]);
       } finally {
@@ -1441,7 +1601,9 @@ export default function Home() {
                 <select
                   value={pickedOffice}
                   onChange={(e) => {
-                    setPickedOffice(e.target.value);
+                    const value = e.target.value;
+                    setPickedOffice(value);
+                    setAdminDefaultOffice(value === "Semua" ? "" : value);
                     setSelectedRak("Semua");
                   }}
                   disabled={isLoadingLocations}
@@ -1619,7 +1781,8 @@ export default function Home() {
               {isDateRangeValid && (
                 <p className="text-[10px] text-indigo-600 font-bold mt-1">
                   Scan {dateFrom} s/d {dateTo} · {filteredNavRows.length} SKU
-                  {hasActiveFilters && navCompareRows.length > filteredNavRows.length
+                  {hasActiveFilters &&
+                  navCompareRows.length > filteredNavRows.length
                     ? ` (filter: ${filteredNavRows.length}/${navCompareRows.length})`
                     : ""}
                 </p>
@@ -1793,6 +1956,14 @@ export default function Home() {
                       onApprove={(id) => approveScanMutation.mutate(id)}
                       isApproving={approveScanMutation.isPending}
                       approvingScanId={approveScanMutation.variables}
+                      onUpdateQty={(scanLogId, qty) =>
+                        updateScanMutation.mutate({ scanLogId, qty })
+                      }
+                      onDeleteScan={(scanLogId) =>
+                        deleteScanMutation.mutate(scanLogId)
+                      }
+                      isMutatingScan={isMutatingScan}
+                      mutatingScanId={mutatingScanId}
                     />
                   );
                 })
@@ -1805,7 +1976,7 @@ export default function Home() {
       {/* ==========================================
           FOOTER
           ========================================== */}
-      <footer className="relative z-10 border-t border-slate-200/80 bg-white/40 px-6 py-4 flex items-center justify-between text-xs text-slate-400 font-medium mt-auto">
+      <footer className="relative z-10 border-t border-slate-200/80 bg-white/40 px-6 py-4 flex items-center justify-between text-xs text-black font-medium mt-auto">
         <p>&copy; 2026 CSI Stok Opname System. All rights reserved.</p>
         <p className="flex items-center gap-1">
           <Sparkles className="h-3.5 w-3.5 text-indigo-500 animate-pulse" />

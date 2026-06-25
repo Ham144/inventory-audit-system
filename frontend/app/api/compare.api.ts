@@ -70,6 +70,24 @@ export const CompareApi = {
     return response.data;
   },
 
+  updateScanQty: async (
+    scanLogId: string,
+    qty: number,
+  ): Promise<ScanCompareRow | null> => {
+    const response = await axiosInstance.patch<ScanCompareRow | null>(
+      `/api/compare/scan/${scanLogId}`,
+      { qty },
+    );
+    return response.data;
+  },
+
+  deleteScanLog: async (scanLogId: string): Promise<ScanCompareRow | null> => {
+    const response = await axiosInstance.delete<ScanCompareRow | null>(
+      `/api/compare/scan/${scanLogId}`,
+    );
+    return response.data;
+  },
+
   fetchNavCompareList: async (
     params: CompareQueryParams,
   ): Promise<NavCompareRow[]> => {
