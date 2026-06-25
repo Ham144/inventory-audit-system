@@ -1,4 +1,7 @@
 import { findUserByUsername } from "./user-store.js";
+import { readJwtUsername } from "./auth-profile.js";
+
+export { readJwtUsername } from "./auth-profile.js";
 
 export type AppUser = {
   username: string;
@@ -19,9 +22,7 @@ function normalizeRole(role?: string | null): AppRole | null {
 }
 
 function readUsername(jwtUser?: JwtPayload): string | null {
-  if (!jwtUser) return null;
-  const username = jwtUser.username ?? jwtUser.name ?? jwtUser.usernameLdap;
-  return typeof username === "string" && username.trim() ? username.trim() : null;
+  return readJwtUsername(jwtUser);
 }
 
 function readOfficeFromJwt(jwtUser?: JwtPayload): string | null {
@@ -67,7 +68,7 @@ export async function resolveAppUser(req: {
   if (dbUser) {
     return {
       username: dbUser.username,
-      role: dbUser.role,
+      role: dbUser.role ?? "operator",
       office: dbUser.office,
     };
   }

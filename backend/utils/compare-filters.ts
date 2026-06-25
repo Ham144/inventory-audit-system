@@ -4,18 +4,40 @@ export type CompareQueryFilters = {
   office: string;
   rak: string;
   search: string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 export function parseCompareQueryFilters(query: {
   office?: string;
   rak?: string;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }): CompareQueryFilters {
+  const dateFrom = (query.dateFrom || "").trim() || undefined;
+  const dateTo = (query.dateTo || "").trim() || undefined;
   return {
     office: query.office || "Semua",
     rak: query.rak || "Semua",
     search: (query.search || "").trim(),
+    dateFrom,
+    dateTo,
   };
+}
+
+export function validateDateRange(
+  dateFrom?: string,
+  dateTo?: string,
+): string | null {
+  if (!dateFrom && !dateTo) return null;
+  if ((dateFrom && !dateTo) || (!dateFrom && dateTo)) {
+    return "dateFrom dan dateTo keduanya wajib jika salah satu diisi";
+  }
+  if (dateFrom! > dateTo!) {
+    return "dateFrom tidak boleh lebih besar dari dateTo";
+  }
+  return null;
 }
 
 type ScanCompareRow = {

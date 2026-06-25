@@ -5,6 +5,7 @@ import {
   filterNavCompareRows,
   filterScanCompareRows,
   parseCompareQueryFilters,
+  validateDateRange,
 } from "../utils/compare-filters.js";
 import {
   approvalGroupKey,
@@ -114,6 +115,7 @@ async function buildNavRow(
     name: string;
     systemQty: number;
     status: string;
+    note?: string | null;
     updatedAt: Date;
     sessionId: string;
     session?: { office?: string; locationCode?: string };
@@ -140,6 +142,8 @@ async function buildNavRow(
     updatedAt: item.updatedAt.toISOString(),
     resolvedRakCount: stats.resolvedRakCount,
     pendingRakCount: stats.pendingRakCount,
+    sessionId: item.sessionId,
+    note: item.note ?? null,
   };
 }
 
@@ -360,6 +364,30 @@ async function skusForRakFilter(
   return new Set(scans.map((s) => s.sku));
 }
 
+async function navKeysWithScansInDateRange(
+  whereClause: SessionScopeWhere,
+  dateFrom: string,
+  dateTo: string,
+): Promise<Set<string>> {
+  const from = new Date(`${dateFrom}T00:00:00`);
+  const to = new Date(`${dateTo}T23:59:59`);
+
+  const scans = await prisma.scanLog.findMany({
+    where: {
+      ...whereClause,
+      createdAt: { gte: from, lte: to },
+    },
+    select: { sessionId: true, sku: true, office: true } as never,
+  }) as Array<{ sessionId: string; sku: string; office?: string; locationCode?: string }>;
+
+  const keys = new Set<string>();
+  for (const s of scans) {
+    const office = readOffice(s);
+    keys.add(navAggregateKey(s.sessionId, s.sku, office));
+  }
+  return keys;
+}
+
 const router = express.Router();
 
 async function scopedCompareFilters(req: Request) {
@@ -444,11 +472,28 @@ router.post("/scan/approve", async (req: Request, res: Response) => {
 router.get("/nav", async (req: Request, res: Response) => {
   try {
     const filters = await scopedCompareFilters(req);
+
+    const dateErr = validateDateRange(filters.dateFrom, filters.dateTo);
+    if (dateErr) {
+      return res.status(400).json({ error: dateErr });
+    }
+
     const whereClause = await sessionScopeWhere(filters.office);
 
     const rows = await buildNavCompareRows(whereClause);
     const skusWithRak = await skusForRakFilter(whereClause, filters.rak);
-    const filtered = filterNavCompareRows(rows, filters, skusWithRak);
+    let filtered = filterNavCompareRows(rows, filters, skusWithRak);
+
+    if (filters.dateFrom && filters.dateTo) {
+      const dateKeys = await navKeysWithScansInDateRange(
+        whereClause,
+        filters.dateFrom,
+        filters.dateTo,
+      );
+      filtered = filtered.filter((r) =>
+        dateKeys.has(navAggregateKey((r as typeof r & { sessionId: string }).sessionId, r.sku, r.office)),
+      );
+    }
 
     return res.json(filtered);
   } catch (error: unknown) {
@@ -488,6 +533,51 @@ router.post(
           status,
           updatedAt: new Date(),
         },
+        include: { session: { select: SESSION_OFFICE_SELECT } },
+      });
+
+      const row = await buildNavRow(updated);
+      return res.json(row);
+    } catch (error: unknown) {
+      return res.status(500).json({ error: errorMessage(error) });
+    }
+  },
+);
+
+router.patch(
+  "/nav/:compareItemId/note",
+  async (req: Request, res: Response) => {
+    try {
+      const appUser = await resolveAppUser(
+        req as Request & { user?: Record<string, unknown> },
+      );
+      if (!canAccessAdmin(appUser)) {
+        return res.status(403).json({
+          error: "Hanya admin atau owner yang dapat mengubah catatan",
+        });
+      }
+
+      const compareItemId = String(req.params.compareItemId);
+      const { note } = req.body as { note?: string | null };
+
+      const item = await prisma.compareItem.findUnique({
+        where: { id: compareItemId },
+        include: { session: { select: SESSION_OFFICE_SELECT } },
+      });
+
+      if (!item) {
+        return res.status(404).json({ error: "Compare item tidak ditemukan" });
+      }
+
+      const trimmed =
+        typeof note === "string" ? note.trim() : note === null ? "" : undefined;
+      if (trimmed === undefined) {
+        return res.status(400).json({ error: "note wajib berupa string" });
+      }
+
+      const updated = await prisma.compareItem.update({
+        where: { id: item.id },
+        data: { note: trimmed || null } as never,
         include: { session: { select: SESSION_OFFICE_SELECT } },
       });
 

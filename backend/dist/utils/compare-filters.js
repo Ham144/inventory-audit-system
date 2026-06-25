@@ -1,10 +1,25 @@
 import { isHiddenProductSku } from "./product-filter.js";
 export function parseCompareQueryFilters(query) {
+    const dateFrom = (query.dateFrom || "").trim() || undefined;
+    const dateTo = (query.dateTo || "").trim() || undefined;
     return {
         office: query.office || "Semua",
         rak: query.rak || "Semua",
         search: (query.search || "").trim(),
+        dateFrom,
+        dateTo,
     };
+}
+export function validateDateRange(dateFrom, dateTo) {
+    if (!dateFrom && !dateTo)
+        return null;
+    if ((dateFrom && !dateTo) || (!dateFrom && dateTo)) {
+        return "dateFrom dan dateTo keduanya wajib jika salah satu diisi";
+    }
+    if (dateFrom > dateTo) {
+        return "dateFrom tidak boleh lebih besar dari dateTo";
+    }
+    return null;
 }
 export function filterScanCompareRows(rows, filters) {
     return rows.filter((item) => {

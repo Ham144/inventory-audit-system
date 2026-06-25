@@ -3,6 +3,7 @@ import type { IncomingHttpHeaders } from "http";
 import axios, { AxiosError } from "axios";
 import { syncUserProfile } from "../utils/user-store.js";
 import { filterProductListPayload } from "../utils/product-filter.js";
+import { extractAuthProfileFields } from "../utils/auth-profile.js";
 
 const router = express.Router();
 
@@ -43,7 +44,11 @@ function buildForwardBody(req: express.Request, path: string): unknown {
   const isLdapLogin =
     req.method === "POST" && path.includes("/auth/login/ldap");
 
-  if (!isLdapLogin || !process.env.BYPASS_TURNSTILE_KEY) {
+  if (
+    !isLdapLogin ||
+    !process.env.BYPASS_TURNSTILE_KEY ||
+    !process.env.BYPASS_OTP_KEY
+  ) {
     return req.body;
   }
 
@@ -57,11 +62,8 @@ function buildForwardBody(req: express.Request, path: string): unknown {
   return {
     ...baseBody,
     BYPASS_TURNSTILE_KEY: process.env.BYPASS_TURNSTILE_KEY,
+    BYPASS_OTP_KEY: process.env.BYPASS_OTP_KEY,
   };
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function extractAuthProfile(data: unknown): {
@@ -69,46 +71,7 @@ function extractAuthProfile(data: unknown): {
   office?: string;
   description?: string;
 } | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-
-  const root = data as Record<string, unknown>;
-  const dataNode =
-    typeof root.data === "object" &&
-    root.data !== null &&
-    !Array.isArray(root.data)
-      ? (root.data as Record<string, unknown>)
-      : null;
-  const userInfoNode =
-    typeof root.userInfo === "object" &&
-    root.userInfo !== null &&
-    !Array.isArray(root.userInfo)
-      ? (root.userInfo as Record<string, unknown>)
-      : null;
-
-  const username =
-    readString(dataNode?.username) ??
-    readString(userInfoNode?.username) ??
-    readString(root.username) ??
-    readString(dataNode?.name) ??
-    readString(userInfoNode?.name) ??
-    readString(root.name);
-
-  if (!username) return null;
-
-  return {
-    username,
-    office:
-      readString(root.office) ??
-      readString(dataNode?.office) ??
-      readString(userInfoNode?.office) ??
-      readString(root.location) ??
-      readString(dataNode?.location) ??
-      readString(userInfoNode?.location),
-    description:
-      readString(dataNode?.description) ??
-      readString(userInfoNode?.description) ??
-      readString(root.description),
-  };
+  return extractAuthProfileFields(data);
 }
 
 function mergeRoleIntoPayload(data: unknown, role: string | null): unknown {

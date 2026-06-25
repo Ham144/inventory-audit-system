@@ -1,7 +1,7 @@
 import { Link } from "react-router";
-import { Layers, BookOpen, LogIn, ScanLine, Shield, Settings, History } from "lucide-react";
+import { Layers, BookOpen, LogIn } from "lucide-react";
 import { useUserInfo } from "~/store";
-import { canAccessAdmin } from "~/libs/user-access";
+import { AppNavigation } from "./AppNavigation";
 
 const DOC_SECTIONS = [
   { id: "ringkasan", label: "Ringkasan" },
@@ -35,7 +35,6 @@ export function DocsShell({
 }: DocsShellProps) {
   const { userInfo } = useUserInfo();
   const isLoggedIn = Boolean(userInfo?.username);
-  const showAdmin = canAccessAdmin(userInfo);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
@@ -55,7 +54,7 @@ export function DocsShell({
             </div>
           </Link>
 
-          <nav className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {!isLoggedIn ? (
               <Link
                 to="/login"
@@ -65,40 +64,9 @@ export function DocsShell({
                 Login
               </Link>
             ) : (
-              <>
-                <Link
-                  to="/input"
-                  className="btn btn-sm btn-outline border-indigo-200 text-indigo-700 gap-1.5"
-                >
-                  <ScanLine className="h-3.5 w-3.5" />
-                  Input
-                </Link>
-                {showAdmin && (
-                  <Link
-                    to="/admin"
-                    className="btn btn-sm btn-primary gap-1.5"
-                  >
-                    <Shield className="h-3.5 w-3.5" />
-                    Admin
-                  </Link>
-                )}
-                <Link
-                  to="/my-logs"
-                  className="btn btn-sm btn-ghost gap-1.5 text-slate-600"
-                >
-                  <History className="h-3.5 w-3.5" />
-                  My Logs
-                </Link>
-                <Link
-                  to="/settings"
-                  className="btn btn-sm btn-ghost gap-1.5 text-slate-600"
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                  Settings
-                </Link>
-              </>
+              <AppNavigation />
             )}
-          </nav>
+          </div>
         </div>
       </header>
 

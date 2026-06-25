@@ -22,6 +22,7 @@ import {
 import locationApi from "~/api/LocationApi";
 import {
   type AppRole,
+  canAccessAdmin,
   isOwner,
   userRole,
   userSessionLabel,
@@ -114,6 +115,10 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!userInfo?.username) {
       redirect("/login");
+      return;
+    }
+    if (!canAccessAdmin(userInfo)) {
+      redirect("/input");
     }
   }, [userInfo]);
 

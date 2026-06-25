@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { loginLdap, loginApp } from "../api/authApi";
 import { syncAppUser, getAppUser } from "../api/opnameUserApi";
-import { parseAuthProfile } from "../libs/auth-profile";
+import { parseAuthProfile, resolveUserRole } from "../libs/auth-profile";
 import { useUserInfo } from "../store";
 
 export default function Login() {
@@ -48,39 +48,44 @@ export default function Login() {
         (res.status === 200 || res.status === 201 || res.data?.success)
       ) {
         const profile = parseAuthProfile(res.data);
-        if (profile) {
+        if (!profile) {
+          setErrorMsg(
+            "Profil user tidak dapat dibaca dari server. Hubungi admin IT.",
+          );
+          return;
+        }
+
+        try {
+          const synced = await syncAppUser({
+            office: profile.office,
+            description: profile.description,
+          });
+          setUserInfo({
+            username: profile.username,
+            office: synced.office ?? profile.office,
+            description: profile.description ?? undefined,
+            role: resolveUserRole(profile, synced.role),
+          });
+        } catch {
+          const dataRole =
+            typeof res.data?.data === "object" && res.data.data !== null
+              ? (res.data.data as { role?: string }).role
+              : undefined;
           try {
-            const synced = await syncAppUser({
-              office: profile.office,
-              description: profile.description,
-            });
+            const appUser = await getAppUser();
             setUserInfo({
               username: profile.username,
-              office: synced.office ?? profile.office,
+              office: appUser.office ?? profile.office,
               description: profile.description ?? undefined,
-              role: synced.role ?? undefined,
+              role: resolveUserRole(profile, appUser.role ?? dataRole),
             });
           } catch {
-            const dataRole =
-              typeof res.data?.data === "object" && res.data.data !== null
-                ? (res.data.data as { role?: string }).role
-                : undefined;
-            try {
-              const appUser = await getAppUser();
-              setUserInfo({
-                username: profile.username,
-                office: appUser.office ?? profile.office,
-                description: profile.description ?? undefined,
-                role: appUser.role ?? dataRole,
-              });
-            } catch {
-              setUserInfo({
-                username: profile.username,
-                office: profile.office,
-                description: profile.description ?? undefined,
-                role: dataRole,
-              });
-            }
+            setUserInfo({
+              username: profile.username,
+              office: profile.office,
+              description: profile.description ?? undefined,
+              role: resolveUserRole(profile, dataRole),
+            });
           }
         }
         navigate("/input");

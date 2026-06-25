@@ -1,4 +1,6 @@
 import { findUserByUsername } from "./user-store.js";
+import { readJwtUsername } from "./auth-profile.js";
+export { readJwtUsername } from "./auth-profile.js";
 function normalizeRole(role) {
     const value = role?.trim().toLowerCase();
     if (value === "operator" || value === "admin" || value === "owner") {
@@ -7,10 +9,7 @@ function normalizeRole(role) {
     return null;
 }
 function readUsername(jwtUser) {
-    if (!jwtUser)
-        return null;
-    const username = jwtUser.username ?? jwtUser.name ?? jwtUser.usernameLdap;
-    return typeof username === "string" && username.trim() ? username.trim() : null;
+    return readJwtUsername(jwtUser);
 }
 function readOfficeFromJwt(jwtUser) {
     if (!jwtUser)

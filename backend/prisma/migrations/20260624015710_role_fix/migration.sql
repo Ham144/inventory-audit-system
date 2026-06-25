@@ -54,6 +54,17 @@ CREATE TABLE "CompareItem" (
     CONSTRAINT "CompareItem_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "User" (
+    "username" TEXT NOT NULL,
+    "role" TEXT NOT NULL DEFAULT 'operator',
+    "office" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("username")
+);
+
 -- CreateIndex
 CREATE INDEX "ScanLog_sku_idx" ON "ScanLog"("sku");
 

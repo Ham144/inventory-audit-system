@@ -14,6 +14,7 @@ import {
 import {
   assertScanAccess,
   isOwner,
+  readJwtUsername,
   resolveAppUser,
   resolveOfficeFilter,
 } from "../utils/app-user.js";
@@ -49,8 +50,8 @@ router.get("/me", async (req: any, res: Response) => {
 
 router.post("/me/sync", async (req: any, res: Response) => {
   try {
-    const username = req.user?.username as string | undefined;
-    if (!username?.trim()) {
+    const username = readJwtUsername(req.user);
+    if (!username) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
@@ -60,7 +61,7 @@ router.post("/me/sync", async (req: any, res: Response) => {
     };
 
     const user = await syncUserProfile({
-      username: username.trim(),
+      username,
       office: office?.trim() || null,
       description: description?.trim() || null,
     });
@@ -259,7 +260,10 @@ router.post("/scan", async (req: any, res: Response) => {
     const loc = access.office;
 
     const session = await getOrCreateActiveSession(loc);
-    const operator = req.user.username as string;
+    const operator = readJwtUsername(req.user);
+    if (!operator) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
     const rakNum = Number(rak) || 1;
     const qtyNum = Number(qty) || 0;
 

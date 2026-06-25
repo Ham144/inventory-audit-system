@@ -2,7 +2,7 @@ import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
 import { reconcileApprovalAfterGroupChange, deleteScanQtyApprovals, toScanGroups, readOffice, } from "../utils/scan-approval.js";
-import { assertScanAccess, isOwner, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
+import { assertScanAccess, isOwner, readJwtUsername, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
 import { listUsers, syncUserProfile, updateUserRole, } from "../utils/user-store.js";
 import { parseCatalogList, resolveStockQty, toCompareItemSeed, } from "../types/catalog.js";
 import { filterHiddenProducts, isHiddenProductSku, } from "../utils/product-filter.js";
@@ -21,13 +21,13 @@ router.get("/me", async (req, res) => {
 });
 router.post("/me/sync", async (req, res) => {
     try {
-        const username = req.user?.username;
-        if (!username?.trim()) {
+        const username = readJwtUsername(req.user);
+        if (!username) {
             return res.status(401).json({ message: "Unauthorized" });
         }
         const { office, description } = req.body;
         const user = await syncUserProfile({
-            username: username.trim(),
+            username,
             office: office?.trim() || null,
             description: description?.trim() || null,
         });
@@ -188,7 +188,10 @@ router.post("/scan", async (req, res) => {
         }
         const loc = access.office;
         const session = await getOrCreateActiveSession(loc);
-        const operator = req.user.username;
+        const operator = readJwtUsername(req.user);
+        if (!operator) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
         const rakNum = Number(rak) || 1;
         const qtyNum = Number(qty) || 0;
         const existing = await prisma.scanLog.findFirst({

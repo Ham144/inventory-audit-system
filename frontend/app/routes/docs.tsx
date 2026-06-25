@@ -64,7 +64,9 @@ export default function Docs() {
             <code className="text-xs bg-slate-100 px-1 rounded">
               CompareItem
             </code>{" "}
-            — state compare NAV per SKU
+            — state compare NAV per SKU (termasuk field opsional{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">note</code>{" "}
+            untuk catatan admin)
           </li>
           <li>
             <code className="text-xs bg-slate-100 px-1 rounded">User</code> —
@@ -197,8 +199,115 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
           <Link to="/admin" className="link link-primary">
             /admin
           </Link>{" "}
-          untuk admin & owner.
+          untuk admin & owner. Setiap baris tabel berasal dari model{" "}
+          <code className="text-xs bg-slate-100 px-1 rounded">CompareItem</code>{" "}
+          (per SKU + sesi opname aktif).
         </p>
+
+        <p className="font-semibold text-slate-800 mt-4">
+          Dua tahap perbandingan
+        </p>
+        <ol className="list-decimal pl-5 space-y-2">
+          <li>
+            <strong>Compare scan (per rak)</strong> — qty antar operator di rak
+            yang sama; jika beda, admin <strong>Tetapkan</strong> via{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              POST /api/compare/scan/approve
+            </code>
+            . Baris dengan rak pending tidak boleh compare NAV.
+          </li>
+          <li>
+            <strong>Compare NAV (per SKU + lokasi)</strong> — tombol manual per
+            baris memanggil{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              POST /api/compare/nav/:compareItemId/check
+            </code>
+            . Hanya aktif jika semua rak sudah resolved (
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              pendingRakCount === 0
+            </code>
+            ). Membandingkan total fisik vs stok ERP (NAV).
+          </li>
+        </ol>
+
+        <p className="font-semibold text-slate-800 mt-4">
+          Filter tanggal scan
+        </p>
+        <ul className="list-disc pl-5 space-y-2">
+          <li>
+            Input <strong>Dari</strong> / <strong>Sampai</strong> memfilter
+            tabel dan scope bulk compare
+          </li>
+          <li>
+            Hanya SKU yang punya minimal 1{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">ScanLog</code>{" "}
+            dengan{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">createdAt</code>{" "}
+            dalam rentang tanggal
+          </li>
+          <li>
+            Query API:{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              GET /api/compare/nav?dateFrom=YYYY-MM-DD&amp;dateTo=YYYY-MM-DD
+            </code>{" "}
+            (keduanya wajib jika salah satu diisi)
+          </li>
+          <li>Default UI: 7 hari terakhir s/d hari ini</li>
+        </ul>
+
+        <p className="font-semibold text-slate-800 mt-4">
+          Bulk Compare + Export CSV
+        </p>
+        <ul className="list-disc pl-5 space-y-2">
+          <li>
+            Tombol <strong>Bulk Compare + CSV</strong> memproses semua SKU dalam
+            rentang tanggal + filter aktif (wilayah, rak, search)
+          </li>
+          <li>
+            SKU eligible (
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              pendingRakCount === 0
+            </code>
+            ) di-compare satu per satu (sequential, hindari membanjiri ERP)
+          </li>
+          <li>
+            SKU dengan rak pending <em>tidak</em> di-compare, tetapi tetap masuk
+            CSV dengan status{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              dilewati_pending_rak
+            </code>
+          </li>
+          <li>
+            Setelah selesai, file CSV otomatis terunduh (
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              compare-nav-YYYY-MM-DD_YYYY-MM-DD.csv
+            </code>
+            )
+          </li>
+        </ul>
+
+        <p className="font-semibold text-slate-800 mt-4">Catatan per barang</p>
+        <ul className="list-disc pl-5 space-y-2">
+          <li>
+            Setiap baris{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              CompareItem
+            </code>{" "}
+            punya field opsional{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">note</code> (satu
+            teks per SKU, bukan array)
+          </li>
+          <li>
+            Tombol <strong>Note</strong> di kolom Catatan → modal textarea →
+            simpan via{" "}
+            <code className="text-xs bg-slate-100 px-1 rounded">
+              PATCH /api/compare/nav/:compareItemId/note
+            </code>
+          </li>
+          <li>Catatan ikut diekspor ke kolom <strong>Catatan</strong> di CSV</li>
+        </ul>
+
+        <p className="font-semibold text-slate-800 mt-4">Filter &amp; lainnya</p>
         <ul className="list-disc pl-5 space-y-2">
           <li>
             <strong>Kolom Fisik (NAV)</strong> ={" "}
@@ -208,26 +317,27 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
             semua rak resolved per SKU + office
           </li>
           <li>
-            <strong>Compare scan</strong> — agregasi per operator per rak; jika
-            qty operator berbeda di rak sama → admin <strong>Tetapkan</strong>{" "}
-            via{" "}
-            <code className="text-xs bg-slate-100 px-1 rounded">
-              POST /api/compare/scan/approve
-            </code>
+            Filter tambahan: wilayah, rak, search SKU/nama, status NAV
+            (pending / selisih / sesuai), sort
           </li>
-          <li>
-            Filter: wilayah, rak, search SKU/nama, status NAV (pending / selisih
-            / sesuai), sort
-          </li>
-          <li>Sync ERP — refresh kuantitas sistem (NAV systemQty)</li>
+          <li>Tombol Perbarui — refresh data compare scan</li>
           <li>Auto-expand baris yang masih pending approval</li>
         </ul>
-        <p>Status compare:</p>
+
+        <p>Status compare NAV:</p>
         <div className="flex flex-wrap gap-2">
           <span className="badge badge-ghost">BELUM_COMPARE</span>
           <span className="badge badge-success">SESUAI</span>
           <span className="badge badge-warning">SELISIH</span>
         </div>
+
+        <p className="font-semibold text-slate-800 mt-4">
+          Kolom CSV bulk export
+        </p>
+        <CodeBlock>{`SKU, Nama Barang, Lokasi, Fisik, ERP, Selisih, Status NAV,
+Rak Selesai, Rak Pending, Hasil, Keterangan, Catatan
+
+Hasil: dibandingkan | dilewati_pending_rak | gagal`}</CodeBlock>
       </DocSection>
 
       <DocSection id="menu" title="6. Menu Aplikasi">
@@ -267,10 +377,28 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
               Dashboard Rekonsiliasi
             </p>
             <ul className="mt-2 list-disc pl-5 text-xs space-y-1">
-              <li>Stats cards global (SKU, pending rak, selisih)</li>
-              <li>Tabel perbandingan NAV vs scan fisik per operator</li>
-              <li>Approve / tetapkan qty operator per rak</li>
-              <li>Filter, expand/collapse, reset filter</li>
+              <li>Stats cards (SKU, pending rak, selisih, sesuai)</li>
+              <li>
+                Tabel NAV per SKU + lokasi (sumber:{" "}
+                <code className="bg-slate-100 px-1 rounded">CompareItem</code>)
+              </li>
+              <li>Tetapkan qty operator per rak (compare scan)</li>
+              <li>
+                Compare NAV manual per baris (jika semua rak sudah resolved)
+              </li>
+              <li>
+                Filter tanggal scan (Dari/Sampai) — memfilter tabel &amp; scope
+                bulk
+              </li>
+              <li>
+                Bulk Compare + CSV — loop compare NAV + unduh laporan otomatis
+              </li>
+              <li>
+                Catatan per barang (field{" "}
+                <code className="bg-slate-100 px-1 rounded">note</code> di
+                CompareItem)
+              </li>
+              <li>Filter wilayah, rak, search, status NAV, sort</li>
               <li>Akses: admin + owner (operator di-redirect ke /input)</li>
             </ul>
           </div>
@@ -345,7 +473,24 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
               <tr>
                 <td>GET</td>
                 <td>/api/compare/nav</td>
-                <td className="font-sans">Baris compare NAV vs fisik</td>
+                <td className="font-sans">
+                  Baris compare NAV vs fisik. Query: office, rak, search,
+                  dateFrom, dateTo
+                </td>
+              </tr>
+              <tr>
+                <td>POST</td>
+                <td>/api/compare/nav/:id/check</td>
+                <td className="font-sans">
+                  Compare NAV manual per SKU (fetch stok ERP)
+                </td>
+              </tr>
+              <tr>
+                <td>PATCH</td>
+                <td>/api/compare/nav/:id/note</td>
+                <td className="font-sans">
+                  Simpan catatan per CompareItem (admin/owner)
+                </td>
               </tr>
               <tr>
                 <td>POST</td>

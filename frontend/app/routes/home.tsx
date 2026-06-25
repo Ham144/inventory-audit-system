@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Link, redirect, useNavigate } from "react-router";
+import { redirect, useNavigate } from "react-router";
 import {
-  ArrowLeft,
   MapPin,
   Search,
   CheckCircle2,
@@ -16,12 +15,12 @@ import { logout } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
 import { useUserInfo } from "~/store";
 import {
-  canAccessAdmin,
   canScan,
   isOwner,
   userOffice,
 } from "~/libs/user-access";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AppNavigation } from "~/components/AppNavigation";
 
 interface LocationItem {
   code: string;
@@ -309,36 +308,48 @@ export default function Scan() {
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-30 z-0" />
 
       {/* Header */}
-      <header className="relative z-10 border-b border-slate-200/80 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-3">
-          {canAccessAdmin(userInfo) && (
-            <Link
-              to="/admin"
-              className="p-2 hover:bg-slate-100 rounded-xl transition-all duration-200 text-slate-500 hover:text-slate-800"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          )}
-          <div>
-            <h1 className="text-base font-bold text-slate-900">
-              Input Hasil Scan
-            </h1>
-            <p className="text-[10px] text-slate-500 font-medium">
-              Rekonsiliasi data fisik lapangan
-            </p>
+      <header className="relative z-10 border-b border-slate-200/80 bg-white/80 backdrop-blur-md px-3 sm:px-6 py-4 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h1 className="text-base font-bold text-slate-900">
+                Input Hasil Scan
+              </h1>
+              <p className="text-[10px] text-slate-500 font-medium">
+                Rekonsiliasi data fisik lapangan
+              </p>
+            </div>
+
+            <span className="md:hidden text-[10px] px-3 py-1 rounded-full bg-red-50 border border-red-100 font-bold">
+              <button
+                type="button"
+                className="text-red-600 hover:text-red-800 cursor-pointer"
+                onClick={async () => {
+                  await logout();
+                  navigate("/login");
+                }}
+              >
+                Logout
+              </button>
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <AppNavigation className="max-w-full" />
+            <span className="hidden md:inline-flex text-[10px] px-3 py-1 rounded-full bg-red-50 border border-red-100 font-bold">
+              <button
+                type="button"
+                className="text-red-600 hover:text-red-800 cursor-pointer"
+                onClick={async () => {
+                  await logout();
+                  navigate("/login");
+                }}
+              >
+                Logout
+              </button>
+            </span>
           </div>
         </div>
-        <span className="text-[10px] px-3 py-1 rounded-full bg-red-50 border border-red-100 text-indigo-600 font-bold cursor-pointer">
-          <button
-            className="  text-red-600 hover:text-red-800 cursor-pointer"
-            onClick={async () => {
-              await logout();
-              navigate("/login");
-            }}
-          >
-            Logout
-          </button>
-        </span>
       </header>
 
       {/* Main Content Area */}

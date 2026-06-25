@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, } from "../utils/compare-filters.js";
+import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, validateDateRange, } from "../utils/compare-filters.js";
 import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, } from "../utils/scan-approval.js";
 import { resolveStockQty } from "../types/catalog.js";
 import { canAccessAdmin, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
@@ -73,6 +73,7 @@ async function buildNavRow(item, rakStats, physicalQtyOverride) {
         updatedAt: item.updatedAt.toISOString(),
         resolvedRakCount: stats.resolvedRakCount,
         pendingRakCount: stats.pendingRakCount,
+        sessionId: item.sessionId,
     };
 }
 async function reconcileStaleApprovals(whereClause) {
@@ -218,6 +219,23 @@ async function skusForRakFilter(whereClause, rak) {
     });
     return new Set(scans.map((s) => s.sku));
 }
+async function navKeysWithScansInDateRange(whereClause, dateFrom, dateTo) {
+    const from = new Date(`${dateFrom}T00:00:00`);
+    const to = new Date(`${dateTo}T23:59:59`);
+    const scans = await prisma.scanLog.findMany({
+        where: {
+            ...whereClause,
+            createdAt: { gte: from, lte: to },
+        },
+        select: { sessionId: true, sku: true, office: true },
+    });
+    const keys = new Set();
+    for (const s of scans) {
+        const office = readOffice(s);
+        keys.add(navAggregateKey(s.sessionId, s.sku, office));
+    }
+    return keys;
+}
 const router = express.Router();
 async function scopedCompareFilters(req) {
     const filters = parseCompareQueryFilters(req.query);
@@ -283,10 +301,18 @@ router.post("/scan/approve", async (req, res) => {
 router.get("/nav", async (req, res) => {
     try {
         const filters = await scopedCompareFilters(req);
+        const dateErr = validateDateRange(filters.dateFrom, filters.dateTo);
+        if (dateErr) {
+            return res.status(400).json({ error: dateErr });
+        }
         const whereClause = await sessionScopeWhere(filters.office);
         const rows = await buildNavCompareRows(whereClause);
         const skusWithRak = await skusForRakFilter(whereClause, filters.rak);
-        const filtered = filterNavCompareRows(rows, filters, skusWithRak);
+        let filtered = filterNavCompareRows(rows, filters, skusWithRak);
+        if (filters.dateFrom && filters.dateTo) {
+            const dateKeys = await navKeysWithScansInDateRange(whereClause, filters.dateFrom, filters.dateTo);
+            filtered = filtered.filter((r) => dateKeys.has(navAggregateKey(r.sessionId, r.sku, r.office)));
+        }
         return res.json(filtered);
     }
     catch (error) {

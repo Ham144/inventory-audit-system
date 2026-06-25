@@ -45,7 +45,7 @@ import { useEffect } from "react";
 import { useUserInfo } from "./store";
 import { getUserInfo } from "./api/authApi";
 import { syncAppUser, getAppUser } from "./api/opnameUserApi";
-import { parseAuthProfile } from "./libs/auth-profile";
+import { parseAuthProfile, resolveUserRole } from "./libs/auth-profile";
 import { applyStoredTheme } from "./libs/app-prefs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -67,17 +67,35 @@ export default function App() {
         const profile = parseAuthProfile(res);
         if (!profile) return;
 
-        const synced = await syncAppUser({
-          office: profile.office,
-          description: profile.description,
-        });
-
-        setUserInfo({
-          username: profile.username,
-          office: synced.office ?? profile.office,
-          description: profile.description ?? undefined,
-          role: synced.role ?? undefined,
-        });
+        try {
+          const synced = await syncAppUser({
+            office: profile.office,
+            description: profile.description,
+          });
+          setUserInfo({
+            username: profile.username,
+            office: synced.office ?? profile.office,
+            description: profile.description ?? undefined,
+            role: resolveUserRole(profile, synced.role),
+          });
+        } catch {
+          try {
+            const appUser = await getAppUser();
+            setUserInfo({
+              username: profile.username,
+              office: appUser.office ?? profile.office,
+              description: profile.description ?? undefined,
+              role: resolveUserRole(profile, appUser.role),
+            });
+          } catch {
+            setUserInfo({
+              username: profile.username,
+              office: profile.office,
+              description: profile.description ?? undefined,
+              role: resolveUserRole(profile),
+            });
+          }
+        }
       } catch {
         // user belum login atau sesi habis
       }

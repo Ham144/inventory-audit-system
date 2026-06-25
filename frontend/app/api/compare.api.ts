@@ -4,6 +4,8 @@ export type CompareQueryParams = {
   office: string;
   rak?: string;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 export type ScanCompareRow = {
@@ -35,14 +37,18 @@ export type NavCompareRow = {
   updatedAt: string;
   resolvedRakCount: number;
   pendingRakCount: number;
+  note: string | null;
 };
 
 function toCompareParams(params: CompareQueryParams) {
-  return {
+  const base: Record<string, string> = {
     office: params.office,
     rak: params.rak ?? "Semua",
     search: params.search ?? "",
   };
+  if (params.dateFrom) base.dateFrom = params.dateFrom;
+  if (params.dateTo) base.dateTo = params.dateTo;
+  return base;
 }
 
 export const CompareApi = {
@@ -77,6 +83,17 @@ export const CompareApi = {
   checkNavItem: async (compareItemId: string): Promise<NavCompareRow> => {
     const response = await axiosInstance.post<NavCompareRow>(
       `/api/compare/nav/${compareItemId}/check`,
+    );
+    return response.data;
+  },
+
+  saveNavNote: async (
+    compareItemId: string,
+    note: string,
+  ): Promise<NavCompareRow> => {
+    const response = await axiosInstance.patch<NavCompareRow>(
+      `/api/compare/nav/${compareItemId}/note`,
+      { note },
     );
     return response.data;
   },

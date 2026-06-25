@@ -41,10 +41,14 @@ export async function syncUserProfile(input: {
 
   const result = await pool.query<StoredUser>(
     `INSERT INTO "User" (username, role, office, "createdAt", "updatedAt")
-     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE NULL END, $2, NOW(), NOW())
+     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE 'operator' END, $2, NOW(), NOW())
      ON CONFLICT (username)
      DO UPDATE SET
        office = COALESCE(EXCLUDED.office, "User".office),
+       role = CASE
+         WHEN $3 THEN 'owner'
+         ELSE COALESCE("User".role, 'operator')
+       END,
        "updatedAt" = NOW()
      RETURNING username, role, office`,
     [username, office, assignOwner],

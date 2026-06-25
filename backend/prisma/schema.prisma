@@ -30,7 +30,7 @@ model ScanLog {
   operator     String // Username petugas lapangan
   createdAt    DateTime @default(now())
   office String // Wilayah / Lokasi gudang
-
+  
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -66,17 +66,18 @@ model CompareItem {
   physicalQty Int      @default(0)
   systemQty   Int      @default(0)
   status      String   @default("BELUM_COMPARE") // SESUAI, SELISIH, BELUM_COMPARE
+  note        String?
   updatedAt   DateTime @default(now())
   
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
+  
   @@unique([sessionId, sku])
 }
 
 model User {
   username  String   @id
-  role      String? @default("operator") // operator, admin, owner
+  role      String @default("operator") // operator, admin, owner
   office    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
