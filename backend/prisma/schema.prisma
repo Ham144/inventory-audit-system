@@ -12,7 +12,7 @@ datasource db {
 model OpnameSession {
   id               String             @id @default(uuid())
   name             String // Nama sesi opname (misal: "Opname Mei 2026")
-  office     String
+  office           String
   status           String             @default("ONGOING") // ONGOING, COMPLETED
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
@@ -81,4 +81,12 @@ model User {
   office    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model OfficeMapping {
+  id           String   @id @default(uuid())
+  officeName   String   // e.g. "WL Pluit"
+  locationCode String   @unique // e.g. "PLUIT_JUAL"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

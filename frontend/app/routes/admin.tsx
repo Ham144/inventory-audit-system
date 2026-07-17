@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Search,
   CheckCircle2,
@@ -31,11 +31,13 @@ import {
   compareOfficeScope,
   adminCanPickOffice,
   isAdmin,
+  userOffice,
   userSessionLabel,
 } from "~/libs/user-access";
 import { getAdminDefaultOffice, setAdminDefaultOffice } from "~/libs/app-prefs";
 import {
   normalizeLocationList,
+  resolveInitialPickedOffice,
   resolvePickedOffice,
   type LocationItem,
 } from "~/libs/location";
@@ -975,20 +977,31 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
   );
 }
 
-export default function Home() {
+export default function AdminPage() {
   const { userInfo } = useUserInfo();
   const showOfficePicker = adminCanPickOffice(userInfo);
-  const [pickedOffice, setPickedOffice] = useState(() => {
-    if (typeof window === "undefined") return "Semua";
-    const saved = getAdminDefaultOffice();
-    return saved || "Semua";
-  });
+  const [pickedOffice, setPickedOffice] = useState("Semua");
+  const officeDefaultApplied = useRef(false);
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const compareOffice = compareOfficeScope(
     userInfo,
     showOfficePicker ? pickedOffice : undefined,
   );
+
+  useEffect(() => {
+    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+      return;
+    }
+    officeDefaultApplied.current = true;
+    setPickedOffice(
+      resolveInitialPickedOffice({
+        userOffice: userOffice(userInfo),
+        savedOffice: getAdminDefaultOffice(),
+        locations,
+      }),
+    );
+  }, [showOfficePicker, locations, userInfo]);
 
   useEffect(() => {
     if (!showOfficePicker || locations.length === 0) return;
@@ -1615,8 +1628,8 @@ export default function Home() {
                     <>
                       <option value="Semua">Semua Wilayah</option>
                       {locations.map((loc) => (
-                        <option key={loc.code} value={loc.code}>
-                          {loc.name || loc.description || loc.code}
+                        <option key={loc._id ?? loc.name} value={loc.name}>
+                          {loc.name}
                         </option>
                       ))}
                     </>

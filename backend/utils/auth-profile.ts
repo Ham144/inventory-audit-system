@@ -49,7 +49,6 @@ export function extractAuthProfileFields(
     readFieldCI(dataNode, "username", "usernameLdap", "userName", "name") ??
     readFieldCI(userInfoNode, "username", "usernameLdap", "userName", "name") ??
     readFieldCI(root, "username", "usernameLdap", "userName", "name");
-
   if (!username) return null;
 
   const office =

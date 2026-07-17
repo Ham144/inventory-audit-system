@@ -1,5 +1,6 @@
 import { findUserByUsername } from "./user-store.js";
 import { readJwtUsername } from "./auth-profile.js";
+import { mapLocationToOffice } from "./office-mapping.js";
 
 export { readJwtUsername } from "./auth-profile.js";
 
@@ -86,12 +87,14 @@ export function resolveOfficeFilter(
 ): string {
   const requested = requestedOffice?.trim();
   if (isOwner(user) || isAdmin(user)) {
-    return requested || user?.office?.trim() || "Semua";
+    const rawOffice = requested || user?.office?.trim() || "Semua";
+    return rawOffice === "Semua" ? "Semua" : mapLocationToOffice(rawOffice);
   }
   if (user?.office?.trim()) {
-    return user.office.trim();
+    return mapLocationToOffice(user.office.trim());
   }
-  return requested || "Semua";
+  const rawOffice = requested || "Semua";
+  return rawOffice === "Semua" ? "Semua" : mapLocationToOffice(rawOffice);
 }
 
 export function assertScanAccess(
@@ -113,7 +116,7 @@ export function assertScanAccess(
         message: "Pilih wilayah/lokasi terlebih dahulu.",
       };
     }
-    return { ok: true, office };
+    return { ok: true, office: mapLocationToOffice(office) };
   }
 
   const office = user.office?.trim();
@@ -124,5 +127,5 @@ export function assertScanAccess(
       message: "Akun tidak memiliki office. Scan tidak diizinkan.",
     };
   }
-  return { ok: true, office };
+  return { ok: true, office: mapLocationToOffice(office) };
 }

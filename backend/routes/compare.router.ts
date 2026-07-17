@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
+import { mapOfficeToLocation } from "../utils/office-mapping.js";
 import {
   filterNavCompareRows,
   filterScanCompareRows,
@@ -91,10 +92,11 @@ async function fetchNavStockQty(
   office: string,
   req: Request,
 ): Promise<number> {
+  const locationCode = await mapOfficeToLocation(office);
   const response = await axios.get<StockResponse>(
     `${databaseCenter()}/api/v1/product/getStock`,
     {
-      params: { No: sku, locationCode: office },
+      params: { No: sku, locationCode },
       headers: {
         cookie: req.headers.cookie ?? "",
       },

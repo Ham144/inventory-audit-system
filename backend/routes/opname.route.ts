@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
+import { mapLocationToOffice, mapLocationToOfficeAsync, mapOfficeToLocation } from "../utils/office-mapping.js";
 
 type SessionScopeWhere =
   | { sessionId: string }
@@ -178,7 +179,8 @@ async function getOrCreateActiveSession(office: string) {
   return session;
 }
 
-async function sessionScopeWhere(office: string): Promise<SessionScopeWhere> {
+async function sessionScopeWhere(officeCode: string): Promise<SessionScopeWhere> {
+  const office = officeCode === "Semua" ? "Semua" : await mapLocationToOfficeAsync(officeCode);
   if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
@@ -194,7 +196,8 @@ async function sessionScopeWhere(office: string): Promise<SessionScopeWhere> {
 // 1. GET active session
 router.get("/session/active", async (req: Request, res: Response) => {
   try {
-    const office = (req.query.office as string) || "01";
+    const officeCode = (req.query.office as string) || "01";
+    const office = await mapLocationToOfficeAsync(officeCode);
     const session = await getOrCreateActiveSession(office);
     return res.json(session);
   } catch (error: unknown) {
@@ -209,7 +212,7 @@ router.post("/session/create", async (req: Request, res: Response) => {
       name?: string;
       office?: string;
     };
-    const loc = office || "01";
+    const loc = await mapLocationToOfficeAsync(office || "01");
 
     await prisma.opnameSession.updateMany({
       where: {
@@ -386,7 +389,7 @@ router.post("/sync", async (req: Request, res: Response) => {
         }
 
         const response = await axios.get<StockResponse>(
-          `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${loc}`,
+          `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
         );
 
         const realQty = resolveStockQty(response.data);
@@ -417,7 +420,8 @@ router.post("/sync", async (req: Request, res: Response) => {
 // 6. POST reset active session
 router.post("/reset", async (req: Request, res: Response) => {
   try {
-    const office = (req.body as { office?: string }).office || "01";
+    const officeCode = (req.body as { office?: string }).office || "01";
+    const office = officeCode === "Semua" ? "Semua" : await mapLocationToOfficeAsync(officeCode);
 
     if (office === "Semua") {
       const activeSessions = await prisma.opnameSession.findMany({
@@ -512,7 +516,7 @@ export function startOpnameCron() {
           }
           try {
             const response = await axios.get<StockResponse>(
-              `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${readOffice(session)}`,
+              `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`,
             );
 
             const realQty = resolveStockQty(response.data);

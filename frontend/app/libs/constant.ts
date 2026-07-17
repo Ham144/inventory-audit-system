@@ -1,4 +1,3 @@
-// 1. Ambil hostname secara aman (hanya jika dieksekusi di browser)
 const getHostname = () => {
   if (typeof window !== "undefined") {
     return window.location.hostname;
@@ -17,4 +16,3 @@ export const BASE_URL =
   NODE_ENV === "development"
     ? "http://192.168.169.12:3000"
     : "http://192.168.169.26:3000";
-

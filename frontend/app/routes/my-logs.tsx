@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Link, redirect } from "react-router";
 import {
   History,
@@ -17,9 +17,16 @@ import locationApi from "~/api/LocationApi";
 import {
   compareOfficeScope,
   isOwner,
+  userOffice,
   userSessionLabel,
 } from "~/libs/user-access";
-import { normalizeLocationList, type LocationItem } from "~/libs/location";
+import {
+  normalizeLocationList,
+  resolveInitialPickedOffice,
+  resolvePickedOffice,
+  type LocationItem,
+} from "~/libs/location";
+import { getAdminDefaultOffice } from "~/libs/app-prefs";
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -44,6 +51,7 @@ export default function MyLogsPage() {
   const { userInfo } = useUserInfo();
   const showOfficePicker = isOwner(userInfo);
   const [pickedOffice, setPickedOffice] = useState("Semua");
+  const officeDefaultApplied = useRef(false);
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -88,6 +96,28 @@ export default function MyLogsPage() {
     };
     fetchLocations();
   }, [showOfficePicker]);
+
+  useEffect(() => {
+    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+      return;
+    }
+    officeDefaultApplied.current = true;
+    setPickedOffice(
+      resolveInitialPickedOffice({
+        userOffice: userOffice(userInfo),
+        savedOffice: getAdminDefaultOffice(),
+        locations,
+      }),
+    );
+  }, [showOfficePicker, locations, userInfo]);
+
+  useEffect(() => {
+    if (!showOfficePicker || locations.length === 0) return;
+    const resolved = resolvePickedOffice(pickedOffice, locations);
+    if (resolved !== pickedOffice) {
+      setPickedOffice(resolved);
+    }
+  }, [showOfficePicker, locations, pickedOffice]);
 
   const filteredLogs = useMemo(() => {
     const username = userInfo?.username?.trim().toLowerCase();
@@ -202,8 +232,8 @@ export default function MyLogsPage() {
                     <>
                       <option value="Semua">Semua Wilayah</option>
                       {locations.map((loc) => (
-                        <option key={loc.code} value={loc.code}>
-                          {loc.name || loc.description || loc.code}
+                        <option key={loc._id ?? loc.name} value={loc.name}>
+                          {loc.name}
                         </option>
                       ))}
                     </>

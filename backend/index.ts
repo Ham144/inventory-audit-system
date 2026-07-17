@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import externalBackendRouter from "./routes/external-backend.route.js";
 import opnameRouter, { startOpnameCron } from "./routes/opname.route.js";
 import compareRouter from "./routes/compare.router.js";
+import mappingRouter from "./routes/mapping.route.js";
 import authenticate from "./middlewares/authenticate.middleware.js";
 
 import { connectDB } from "./config/db.js";
@@ -38,6 +39,7 @@ app.use(authenticate);
 app.use("/api/opname", opnameRouter);
 app.use("/so/api", externalBackendRouter);
 app.use("/api/compare", compareRouter);
+app.use("/api/mappings", mappingRouter);
 
 const port = process.env.PORT || 5000;
 

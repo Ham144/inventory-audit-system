@@ -14,12 +14,8 @@ import locationApi from "../api/LocationApi";
 import { logout } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
 import { useUserInfo } from "~/store";
-import {
-  canScan,
-  isOwner,
-  userOffice,
-} from "~/libs/user-access";
-import { normalizeLocationList, type LocationItem } from "~/libs/location";
+import { canScan, isOwner, userOffice } from "~/libs/user-access";
+import { normalizeLocationList, resolveInitialPickedOffice, resolvePickedOffice, type LocationItem } from "~/libs/location";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppNavigation } from "~/components/AppNavigation";
 
@@ -87,6 +83,7 @@ export default function Scan() {
   const fixedOffice = userOffice(userInfo);
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [pickedOffice, setPickedOffice] = useState("");
+  const officeDefaultApplied = useRef(false);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const activeScanOffice = showOfficePicker ? pickedOffice : fixedOffice;
   const scanAllowed = canScan(userInfo, activeScanOffice);
@@ -123,9 +120,30 @@ export default function Scan() {
   });
 
   useEffect(() => {
-    if (!showOfficePicker || !fixedOffice) return;
-    setPickedOffice((prev) => prev || fixedOffice);
-  }, [showOfficePicker, fixedOffice]);
+    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+      return;
+    }
+    officeDefaultApplied.current = true;
+    setPickedOffice(
+      resolveInitialPickedOffice({
+        userOffice: userOffice(userInfo),
+        locations,
+        fallback: "",
+      }),
+    );
+  }, [showOfficePicker, locations, userInfo]);
+
+  useEffect(() => {
+    if (!showOfficePicker || locations.length === 0 || !pickedOffice) return;
+    const resolved = resolvePickedOffice(pickedOffice, locations);
+    if (resolved === "Semua") {
+      setPickedOffice("");
+      return;
+    }
+    if (resolved !== pickedOffice) {
+      setPickedOffice(resolved);
+    }
+  }, [showOfficePicker, locations, pickedOffice]);
 
   useEffect(() => {
     if (!showOfficePicker) return;
@@ -152,11 +170,7 @@ export default function Scan() {
     if (sku === lastSelectedSkuRef.current) return;
 
     lastSelectedSkuRef.current = sku;
-    const preferred = getPreferredRak(
-      sku,
-      activeScanOffice,
-      Number(rak) || 0,
-    );
+    const preferred = getPreferredRak(sku, activeScanOffice, Number(rak) || 0);
     setRak(String(preferred));
   }, [selectedProduct, activeScanOffice]);
 
@@ -393,8 +407,8 @@ export default function Scan() {
                       <>
                         <option value="">Pilih Location Dulu</option>
                         {locations.map((loc) => (
-                          <option key={loc.code} value={loc.code}>
-                            {loc.name || loc.description || loc.code}
+                          <option key={loc._id ?? loc.name} value={loc.name}>
+                            {loc.name}
                           </option>
                         ))}
                       </>
