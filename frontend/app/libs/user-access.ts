@@ -48,6 +48,9 @@ export function canScan(
   user: UserInfo | null | undefined,
   pickedOffice?: string,
 ): boolean {
+  if (isAdmin(user)) {
+    return false;
+  }
   if (isOwner(user)) {
     return Boolean(userOffice(user) || pickedOffice?.trim());
   }

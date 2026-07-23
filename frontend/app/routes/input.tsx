@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { redirect, useNavigate } from "react-router";
+import { redirect, useNavigate, useSearchParams } from "react-router";
 import {
   MapPin,
   Search,
@@ -14,8 +14,14 @@ import locationApi from "../api/LocationApi";
 import { logout } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
 import { useUserInfo } from "~/store";
-import { canScan, isOwner, userOffice } from "~/libs/user-access";
-import { normalizeLocationList, resolveInitialPickedOffice, resolvePickedOffice, type LocationItem } from "~/libs/location";
+import { canScan, isOwner, isAdmin, userOffice } from "~/libs/user-access";
+import {
+  normalizeLocationList,
+  resolveInitialPickedOffice,
+  resolvePickedOffice,
+  fetchAndCacheMappings,
+  type LocationItem,
+} from "~/libs/location";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppNavigation } from "~/components/AppNavigation";
 
@@ -79,8 +85,8 @@ export default function Scan() {
     null,
   );
   const { userInfo } = useUserInfo();
-  const showOfficePicker = isOwner(userInfo);
   const fixedOffice = userOffice(userInfo);
+  const showOfficePicker = isOwner(userInfo) || !fixedOffice;
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [pickedOffice, setPickedOffice] = useState("");
   const officeDefaultApplied = useRef(false);
@@ -90,8 +96,35 @@ export default function Scan() {
 
   const [qty, setQty] = useState("");
   const [rak, setRak] = useState("1");
-  const lastSelectedSkuRef = useRef("");
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
+  const [searchParams] = useSearchParams();
+
+  // Handle auto-fill from ?sku= parameter
+  useEffect(() => {
+    const sku = searchParams.get("sku");
+    if (sku) {
+      setSearchQuery(sku);
+      setIsSearchingProducts(true);
+      ProductApi.searchProducts(sku, 1, 10)
+        .then((res: any) => {
+          const data = Array.isArray(res) ? res : res?.data || [];
+          setProducts(data);
+          if (data.length === 1) {
+            setSelectedProduct(data[0]);
+            setSearchQuery(
+              data[0].Description ||
+                data[0].Description_3 ||
+                data[0].name ||
+                "",
+            );
+          }
+        })
+        .catch(() => setProducts([]))
+        .finally(() => setIsSearchingProducts(false));
+    }
+  }, [searchParams]);
+
+  const lastSelectedSkuRef = useRef("");
   const navigate = useNavigate();
   const operatorName = userInfo?.username ?? "";
   const [toast, setToast] = useState<{
@@ -120,7 +153,11 @@ export default function Scan() {
   });
 
   useEffect(() => {
-    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+    if (
+      !showOfficePicker ||
+      locations.length === 0 ||
+      officeDefaultApplied.current
+    ) {
       return;
     }
     officeDefaultApplied.current = true;
@@ -151,6 +188,7 @@ export default function Scan() {
     const fetchLocations = async () => {
       setIsLoadingLocations(true);
       try {
+        await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
         setLocations(normalizeLocationList(res));
       } catch {
@@ -237,8 +275,7 @@ export default function Scan() {
           selectedProduct.name ||
           "",
         rak: Number(rak),
-        qty: Number(qty),
-        ...(showOfficePicker ? { office: activeScanOffice } : {}),
+        office: activeScanOffice,
       });
 
       if (response.data) {
@@ -286,7 +323,7 @@ export default function Scan() {
       showToast("Masukkan nomor rak yang valid (Angka)!", "error");
       return;
     }
-    if (!qty || Number(qty) <= 0) {
+    if (!qty || isNaN(Number(qty)) || Number(qty) === 0) {
       showToast("Masukkan Qty fisik yang valid!", "error");
       return;
     }
@@ -305,10 +342,18 @@ export default function Scan() {
   };
 
   useEffect(() => {
-    if (!userInfo?.username) {
-      redirect("/login");
+    if (userInfo === null) {
+      navigate("/login", { replace: true });
     }
-  }, [userInfo]);
+  }, [userInfo, navigate]);
+
+  if (userInfo === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <span className="loading loading-spinner loading-lg text-indigo-500" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans relative selection:bg-indigo-100">
@@ -320,9 +365,7 @@ export default function Scan() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="text-base font-bold text-slate-900">
-                Input Hasil Scan
-              </h1>
+              <h1 className="text-base font-bold text-slate-900">Input Stok</h1>
               <p className="text-[10px] text-slate-500 font-medium">
                 Rekonsiliasi data fisik lapangan
               </p>
@@ -420,8 +463,9 @@ export default function Scan() {
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
                 <p className="font-bold">Scan tidak tersedia</p>
                 <p className="mt-1 text-amber-800/90">
-                  Akun Anda belum memiliki office. Hubungi admin untuk
-                  menambahkan office pada profil user.
+                  {isAdmin(userInfo)
+                    ? "Admin tidak diperbolehkan melakukan scan input fisik. Silakan gunakan akun Operator."
+                    : "Akun Anda belum memiliki office. Hubungi admin untuk menambahkan office pada profil user."}
                 </p>
               </div>
             ) : (
@@ -582,7 +626,7 @@ export default function Scan() {
                     placeholder="Masukkan QTY..."
                     value={qty}
                     onChange={(e) => setQty(e.target.value)}
-                    min="1"
+                    step="1"
                     className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                   />
                   {qty && (

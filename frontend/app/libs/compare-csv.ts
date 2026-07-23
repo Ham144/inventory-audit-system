@@ -8,7 +8,7 @@ export type BulkCompareResultRow = {
   resolvedRakCount: number;
   pendingRakCount: number;
   note: string;
-  hasil: "dibandingkan" | "dilewati_pending_rak" | "gagal";
+  hasil: "dibandingkan" | "dilewati_pending_rak" | "gagal" | "laporan";
   keterangan: string;
 };
 
@@ -41,14 +41,15 @@ export function buildBulkCompareCsv(
   ].join(",");
 
   const dataRows = rows.map((r) => {
-    const selisih =
-      r.hasil === "dibandingkan" ? r.physicalQty - r.systemQty : "";
+    const isCompared = r.hasil === "dibandingkan" || (r.hasil === "laporan" && r.status !== "belum_compare");
+    const selisih = isCompared ? r.physicalQty - r.systemQty : "";
+    
     return [
       csvEscape(r.sku),
       csvEscape(r.name),
       csvEscape(r.office),
       csvEscape(r.physicalQty),
-      r.hasil === "dibandingkan" ? csvEscape(r.systemQty) : "—",
+      isCompared ? csvEscape(r.systemQty) : "—",
       selisih !== "" ? csvEscape(selisih) : "—",
       csvEscape(r.status),
       csvEscape(r.resolvedRakCount),

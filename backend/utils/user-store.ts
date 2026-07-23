@@ -98,3 +98,18 @@ export async function updateUserRole(
   );
   return result.rows[0] ?? null;
 }
+
+export async function updateUserOffice(
+  username: string,
+  office: string | null,
+): Promise<StoredUser | null> {
+  const normalizedOffice = office?.trim() || null;
+  const result = await pool.query<StoredUser>(
+    `UPDATE "User"
+     SET office = $2, "updatedAt" = NOW()
+     WHERE username = $1
+     RETURNING username, role, office`,
+    [username.trim(), normalizedOffice],
+  );
+  return result.rows[0] ?? null;
+}

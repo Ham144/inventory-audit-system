@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import {
   KeyRound,
@@ -17,12 +17,18 @@ import { useUserInfo } from "../store";
 
 export default function Login() {
   const navigate = useNavigate();
-  const setUserInfo = useUserInfo((state) => state.setUserInfo);
+  const { userInfo, setUserInfo } = useUserInfo();
   const [loginType, setLoginType] = useState<"ldap" | "app">("ldap");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    if (userInfo?.username) {
+      navigate("/input", { replace: true });
+    }
+  }, [userInfo, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

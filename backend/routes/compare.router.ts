@@ -1,7 +1,7 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapOfficeToLocation } from "../utils/office-mapping.js";
+import { mapOfficeToLocation, mapLocationToOfficeAsync } from "../utils/office-mapping.js";
 import {
   filterNavCompareRows,
   filterScanCompareRows,
@@ -61,7 +61,12 @@ async function getOrCreateActiveSession(office: string) {
   return session;
 }
 
-async function sessionScopeWhere(office: string): Promise<SessionScopeWhere> {
+async function sessionScopeWhere(officeCode: string): Promise<SessionScopeWhere> {
+  const office =
+    officeCode === "Semua"
+      ? "Semua"
+      : await mapLocationToOfficeAsync(officeCode);
+
   if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
@@ -290,16 +295,20 @@ async function buildNavCompareRows(whereClause: SessionScopeWhere) {
       select: {
         sessionId: true,
         sku: true,
-
         office: true,
         rak: true,
+        approval: {
+          select: {
+            id: true,
+          },
+        },
       } as never,
     }),
   ]);
 
   const physicalQtyByKey = new Map<string, number>();
-  const resolvedRakByKey = new Map<string, number>();
   const raksWithScansByKey = new Map<string, Set<number>>();
+  const raksWithPendingScansByKey = new Map<string, Set<number>>();
 
   for (const scan of scans as Array<{
     sessionId: string;
@@ -307,13 +316,22 @@ async function buildNavCompareRows(whereClause: SessionScopeWhere) {
     rak: number;
     office?: string;
     locationCode?: string;
+    approval?: { id: string } | null;
   }>) {
     const office = readOffice(scan);
     const key = navAggregateKey(scan.sessionId, scan.sku, office);
+    
     if (!raksWithScansByKey.has(key)) {
       raksWithScansByKey.set(key, new Set());
     }
     raksWithScansByKey.get(key)!.add(scan.rak);
+
+    if (!scan.approval) {
+      if (!raksWithPendingScansByKey.has(key)) {
+        raksWithPendingScansByKey.set(key, new Set());
+      }
+      raksWithPendingScansByKey.get(key)!.add(scan.rak);
+    }
   }
 
   for (const approval of approvals) {
@@ -326,7 +344,6 @@ async function buildNavCompareRows(whereClause: SessionScopeWhere) {
       key,
       (physicalQtyByKey.get(key) ?? 0) + approval.approvedQty,
     );
-    resolvedRakByKey.set(key, (resolvedRakByKey.get(key) ?? 0) + 1);
   }
 
   return Promise.all(
@@ -334,8 +351,8 @@ async function buildNavCompareRows(whereClause: SessionScopeWhere) {
       const office = readOffice(item.session);
       const key = navAggregateKey(item.sessionId, item.sku, office);
       const raksWithScans = raksWithScansByKey.get(key)?.size ?? 0;
-      const resolvedRakCount = resolvedRakByKey.get(key) ?? 0;
-      const pendingRakCount = Math.max(0, raksWithScans - resolvedRakCount);
+      const pendingRakCount = raksWithPendingScansByKey.get(key)?.size ?? 0;
+      const resolvedRakCount = Math.max(0, raksWithScans - pendingRakCount);
       const physicalQty = physicalQtyByKey.get(key) ?? 0;
 
       return buildNavRow(
@@ -375,13 +392,18 @@ async function navKeysWithScansInDateRange(
   const from = new Date(`${dateFrom}T00:00:00`);
   const to = new Date(`${dateTo}T23:59:59`);
 
-  const scans = await prisma.scanLog.findMany({
+  const scans = (await prisma.scanLog.findMany({
     where: {
       ...whereClause,
       createdAt: { gte: from, lte: to },
     },
     select: { sessionId: true, sku: true, office: true } as never,
-  }) as Array<{ sessionId: string; sku: string; office?: string; locationCode?: string }>;
+  })) as Array<{
+    sessionId: string;
+    sku: string;
+    office?: string;
+    locationCode?: string;
+  }>;
 
   const keys = new Set<string>();
   for (const s of scans) {
@@ -395,11 +417,7 @@ const router = express.Router();
 
 async function scopedCompareFilters(req: Request) {
   const filters = parseCompareQueryFilters(req.query);
-  const appUser = await resolveAppUser(
-    req as Request & { user?: Record<string, unknown> },
-  );
-  const office = resolveOfficeFilter(appUser, filters.office);
-  return { ...filters, office };
+  return { ...filters };
 }
 
 router.get("/scan", async (req: Request, res: Response) => {
@@ -531,7 +549,9 @@ router.patch("/scan/:scanLogId", async (req: Request, res: Response) => {
     const { qty } = req.body as { qty?: number | string };
     const qtyNum = Number(qty);
     if (!Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isInteger(qtyNum)) {
-      return res.status(400).json({ error: "qty harus bilangan bulat positif" });
+      return res
+        .status(400)
+        .json({ error: "qty harus bilangan bulat positif" });
     }
 
     const updated = await prisma.scanLog.update({
@@ -631,7 +651,13 @@ router.get("/nav", async (req: Request, res: Response) => {
         filters.dateTo,
       );
       filtered = filtered.filter((r) =>
-        dateKeys.has(navAggregateKey((r as typeof r & { sessionId: string }).sessionId, r.sku, r.office)),
+        dateKeys.has(
+          navAggregateKey(
+            (r as typeof r & { sessionId: string }).sessionId,
+            r.sku,
+            r.office,
+          ),
+        ),
       );
     }
 

@@ -62,10 +62,16 @@ export default function App() {
     const fetchUser = async () => {
       try {
         const res = await getUserInfo();
-        if (!res) return;
+        if (!res) {
+          setUserInfo(null);
+          return;
+        }
 
         const profile = parseAuthProfile(res);
-        if (!profile) return;
+        if (!profile) {
+          setUserInfo(null);
+          return;
+        }
 
         try {
           const synced = await syncAppUser({
@@ -98,6 +104,7 @@ export default function App() {
         }
       } catch {
         // user belum login atau sesi habis
+        setUserInfo(null);
       }
     };
     fetchUser();

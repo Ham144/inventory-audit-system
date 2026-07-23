@@ -5,11 +5,17 @@ import { getMappings, clearMappingsCache } from "../utils/office-mapping.js";
 
 const router = express.Router();
 
-async function assertAdmin(req: Request, res: Response, next: express.NextFunction) {
+async function assertAdmin(
+  req: Request,
+  res: Response,
+  next: express.NextFunction,
+) {
   try {
     const appUser = await resolveAppUser(req as any);
     if (!canAccessAdmin(appUser)) {
-      return res.status(403).json({ error: "Akses ditolak. Hanya admin/owner yang diizinkan." });
+      return res
+        .status(403)
+        .json({ error: "Akses ditolak. Hanya admin/owner yang diizinkan." });
     }
     next();
   } catch (error) {
@@ -38,7 +44,9 @@ router.post("/", assertAdmin, async (req: Request, res: Response) => {
     };
 
     if (!officeName?.trim() || !locationCode?.trim()) {
-      return res.status(400).json({ error: "Nama office dan kode lokasi wajib diisi." });
+      return res
+        .status(400)
+        .json({ error: "Nama office dan kode lokasi wajib diisi." });
     }
 
     const mapping = await prisma.officeMapping.create({
@@ -70,11 +78,13 @@ router.put("/:id", assertAdmin, async (req: Request, res: Response) => {
     };
 
     if (!officeName?.trim() || !locationCode?.trim()) {
-      return res.status(400).json({ error: "Nama office dan kode lokasi wajib diisi." });
+      return res
+        .status(400)
+        .json({ error: "Nama office dan kode lokasi wajib diisi." });
     }
 
     const mapping = await prisma.officeMapping.update({
-      where: { id },
+      where: { id: id[0] },
       data: {
         officeName: officeName.trim(),
         locationCode: locationCode.trim().toUpperCase(),
@@ -99,7 +109,7 @@ router.delete("/:id", assertAdmin, async (req: Request, res: Response) => {
     const { id } = req.params;
 
     await prisma.officeMapping.delete({
-      where: { id },
+      where: { id: id[0] },
     });
 
     clearMappingsCache();

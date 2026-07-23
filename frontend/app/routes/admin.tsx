@@ -22,7 +22,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { redirect } from "react-router";
+import { redirect, useNavigate } from "react-router";
 import axiosInstance from "../api/axios-instance";
 import locationApi from "../api/LocationApi";
 import { useUserInfo } from "../store";
@@ -39,6 +39,7 @@ import {
   normalizeLocationList,
   resolveInitialPickedOffice,
   resolvePickedOffice,
+  fetchAndCacheMappings,
   type LocationItem,
 } from "~/libs/location";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -49,6 +50,7 @@ import {
   type ScanCompareRow,
 } from "~/api/compare.api";
 import { AppNavigation } from "~/components/AppNavigation";
+import { UserSessionBadge } from "~/components/UserSessionBadge";
 import {
   buildBulkCompareCsv,
   downloadCsv,
@@ -336,6 +338,7 @@ function NavRowExpandedPanel({
   isMutatingScan,
   mutatingScanId,
   compact = false,
+  isNavSesuai = false,
 }: {
   rakDetails: ScanCompareRow[];
   onApprove: (scanLogId: string) => void;
@@ -346,6 +349,7 @@ function NavRowExpandedPanel({
   isMutatingScan: boolean;
   mutatingScanId?: string;
   compact?: boolean;
+  isNavSesuai?: boolean;
 }) {
   return (
     <div
@@ -375,6 +379,7 @@ function NavRowExpandedPanel({
               onDeleteScan={onDeleteScan}
               isMutatingScan={isMutatingScan}
               mutatingScanId={mutatingScanId}
+              isNavSesuai={isNavSesuai}
             />
           ))}
         </div>
@@ -596,11 +601,13 @@ function NavCompareItem({
           <button
             type="button"
             className="btn btn-sm btn-outline btn-primary flex-1"
-            disabled={!canCompareNav || isComparePending}
+            disabled={!canCompareNav || isComparePending || nav.status === "sesuai"}
             title={
-              !canCompareNav
-                ? "Selesaikan penetapan semua rak terlebih dahulu"
-                : undefined
+              nav.status === "sesuai"
+                ? "Sudah sesuai dengan NAV"
+                : !canCompareNav
+                  ? "Selesaikan penetapan semua rak terlebih dahulu"
+                  : undefined
             }
             onClick={onCompareNav}
           >
@@ -682,11 +689,13 @@ function NavCompareItem({
           <button
             type="button"
             className="btn btn-xs btn-outline btn-primary w-full"
-            disabled={!canCompareNav || isComparePending}
+            disabled={!canCompareNav || isComparePending || nav.status === "sesuai"}
             title={
-              !canCompareNav
-                ? "Selesaikan penetapan semua rak terlebih dahulu"
-                : undefined
+              nav.status === "sesuai"
+                ? "Sudah sesuai dengan NAV"
+                : !canCompareNav
+                  ? "Selesaikan penetapan semua rak terlebih dahulu"
+                  : undefined
             }
             onClick={onCompareNav}
           >
@@ -706,6 +715,7 @@ function NavCompareItem({
           isMutatingScan={isMutatingScan}
           mutatingScanId={mutatingScanId}
           compact
+          isNavSesuai={nav.status === "sesuai"}
         />
       )}
     </div>
@@ -721,6 +731,7 @@ function RakDetailRow({
   onDeleteScan,
   isMutatingScan,
   mutatingScanId,
+  isNavSesuai = false,
 }: {
   item: ScanCompareRow;
   onApprove: (scanLogId: string) => void;
@@ -730,6 +741,7 @@ function RakDetailRow({
   onDeleteScan: (scanLogId: string) => void;
   isMutatingScan: boolean;
   mutatingScanId?: string;
+  isNavSesuai?: boolean;
 }) {
   const [editingScan, setEditingScan] = useState<{
     id: string;
@@ -813,9 +825,9 @@ function RakDetailRow({
                 <button
                   type="button"
                   className="btn btn-xs btn-ghost text-slate-500"
-                  disabled={isMutatingScan && mutatingScanId === scan.id}
+                  disabled={(isMutatingScan && mutatingScanId === scan.id) || isNavSesuai}
                   onClick={() => openEdit(scan)}
-                  title="Edit qty"
+                  title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : "Edit qty"}
                   aria-label="Edit qty"
                 >
                   <Pencil className="h-3 w-3" />
@@ -823,9 +835,9 @@ function RakDetailRow({
                 <button
                   type="button"
                   className="btn btn-xs btn-ghost text-red-500"
-                  disabled={isMutatingScan && mutatingScanId === scan.id}
+                  disabled={(isMutatingScan && mutatingScanId === scan.id) || isNavSesuai}
                   onClick={() => handleDelete(scan.id, scan.operator)}
-                  title="Hapus scan"
+                  title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : "Hapus scan"}
                   aria-label="Hapus scan"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -834,7 +846,8 @@ function RakDetailRow({
                   <button
                     type="button"
                     className={`btn btn-xs ${isApproved ? "btn-success" : "btn-primary"}`}
-                    disabled={isApproving && approvingScanId === scan.id}
+                    disabled={(isApproving && approvingScanId === scan.id) || isNavSesuai}
+                    title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : undefined}
                     onClick={() => onApprove(scan.id)}
                   >
                     {isApproved ? "Terpilih" : "Tetapkan"}
@@ -978,7 +991,15 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
 }
 
 export default function AdminPage() {
+  const navigate = useNavigate();
   const { userInfo } = useUserInfo();
+
+  useEffect(() => {
+    if (userInfo && !canAccessAdmin(userInfo)) {
+      navigate("/input", { replace: true });
+    }
+  }, [userInfo, navigate]);
+
   const showOfficePicker = adminCanPickOffice(userInfo);
   const [pickedOffice, setPickedOffice] = useState("Semua");
   const officeDefaultApplied = useRef(false);
@@ -990,7 +1011,11 @@ export default function AdminPage() {
   );
 
   useEffect(() => {
-    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+    if (
+      !showOfficePicker ||
+      locations.length === 0 ||
+      officeDefaultApplied.current
+    ) {
       return;
     }
     officeDefaultApplied.current = true;
@@ -1185,8 +1210,8 @@ export default function AdminPage() {
       invalidateCompareQueries();
       showToast("Qty operator berhasil ditetapkan", "success");
     },
-    onError: () => {
-      showToast("Gagal menetapkan qty operator", "warning");
+    onError: (err) => {
+      showToast(extractApiError(err, "Gagal menetapkan qty operator"), "warning");
     },
   });
 
@@ -1257,14 +1282,14 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    if (!userInfo?.username) {
-      redirect("/login");
+    if (userInfo === null) {
+      navigate("/login", { replace: true });
       return;
     }
-    if (!canAccessAdmin(userInfo)) {
-      redirect("/input");
+    if (userInfo && !canAccessAdmin(userInfo)) {
+      navigate("/input", { replace: true });
     }
-  }, [userInfo]);
+  }, [userInfo, navigate]);
 
   useEffect(() => {
     if (!showOfficePicker) return;
@@ -1272,6 +1297,7 @@ export default function AdminPage() {
     const fetchLocations = async () => {
       setIsLoadingLocations(true);
       try {
+        await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
         setLocations(normalizeLocationList(res));
       } catch {
@@ -1311,8 +1337,12 @@ export default function AdminPage() {
       });
       const allRows = rawItems.map(mapNavCompareItem);
 
-      const eligible = allRows.filter((r) => r.pendingRakCount === 0);
-      const skipped = allRows.filter((r) => r.pendingRakCount > 0);
+      const eligible = allRows.filter(
+        (r) => r.pendingRakCount === 0 && r.status !== "sesuai",
+      );
+      const skipped = allRows.filter(
+        (r) => r.pendingRakCount > 0 || r.status === "sesuai",
+      );
 
       setBulkProgress({ current: 0, total: eligible.length });
 
@@ -1369,9 +1399,6 @@ export default function AdminPage() {
         });
       }
 
-      const csvContent = buildBulkCompareCsv(csvRows, dateFrom, dateTo);
-      downloadCsv(`compare-nav-${dateFrom}_${dateTo}.csv`, csvContent);
-
       invalidateCompareQueries();
 
       const gagal = csvRows.filter((r) => r.hasil === "gagal").length;
@@ -1388,6 +1415,25 @@ export default function AdminPage() {
       setIsBulkComparing(false);
       setBulkProgress(null);
     }
+  };
+
+  const exportToCsv = () => {
+    const csvRows: BulkCompareResultRow[] = filteredNavRows.map((nav) => ({
+      sku: nav.sku,
+      name: nav.name,
+      office: nav.office,
+      physicalQty: nav.physicalQty,
+      systemQty: nav.systemQty,
+      status: nav.status,
+      resolvedRakCount: nav.resolvedRakCount,
+      pendingRakCount: nav.pendingRakCount,
+      note: nav.note ?? "",
+      hasil: "laporan",
+      keterangan: nav.status === "belum_compare" ? "belum compare" : "sudah compare",
+    }));
+
+    const csvContent = buildBulkCompareCsv(csvRows, dateFrom, dateTo);
+    downloadCsv(`laporan-opname-${dateFrom}_${dateTo}.csv`, csvContent);
   };
 
   // Manual Trigger to Sync system stock with ERP / SOT
@@ -1442,6 +1488,14 @@ export default function AdminPage() {
     };
   }, [navCompareRows]);
 
+  if (userInfo === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <span className="loading loading-spinner loading-lg text-indigo-500" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
       {/* Subtle Dot Grid Background */}
@@ -1480,12 +1534,7 @@ export default function AdminPage() {
             Live Sync
           </span>
 
-          {userInfo?.username && (
-            <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-750 text-[10px] font-bold tracking-wider border border-indigo-150 shadow-sm">
-              <UserCheck className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-              <span>{userSessionLabel(userInfo)}</span>
-            </span>
-          )}
+          <UserSessionBadge />
         </div>
       </header>
 
@@ -1832,10 +1881,19 @@ export default function AdminPage() {
                   </>
                 ) : (
                   <>
-                    <Download className="h-3.5 w-3.5" />
-                    Bulk Compare + CSV
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Bulk Compare
                   </>
                 )}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm gap-1.5 border-slate-300 text-slate-700 hover:bg-slate-100"
+                onClick={exportToCsv}
+                disabled={!isDateRangeValid || isBulkComparing || filteredNavRows.length === 0}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
               </button>
               <button
                 type="button"

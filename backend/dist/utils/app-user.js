@@ -1,5 +1,6 @@
 import { findUserByUsername } from "./user-store.js";
 import { readJwtUsername } from "./auth-profile.js";
+import { mapLocationToOffice } from "./office-mapping.js";
 export { readJwtUsername } from "./auth-profile.js";
 function normalizeRole(role) {
     const value = role?.trim().toLowerCase();
@@ -30,61 +31,70 @@ export function canAccessAdmin(user) {
     return isAdmin(user) || isOwner(user);
 }
 export function canScan(user, requestedOffice) {
+    if (isAdmin(user)) {
+        return false;
+    }
     if (isOwner(user)) {
         return Boolean(user?.office?.trim() || requestedOffice?.trim());
     }
     return Boolean(user?.office?.trim());
 }
 export async function resolveAppUser(req) {
+    console.log("DEBUG resolveAppUser: req.user =", req.user);
     const username = readUsername(req.user);
+    console.log("DEBUG resolveAppUser: username =", username);
     if (!username)
         return null;
     const dbUser = await findUserByUsername(username);
+    console.log("DEBUG resolveAppUser: dbUser =", dbUser);
     if (dbUser) {
-        return {
+        const res = {
             username: dbUser.username,
-            role: dbUser.role,
+            role: dbUser.role ?? "operator",
             office: dbUser.office,
         };
+        console.log("DEBUG resolveAppUser: returning dbUser mapping =", res);
+        return res;
     }
-    return {
+    const res = {
         username,
         role: null,
         office: readOfficeFromJwt(req.user),
     };
+    console.log("DEBUG resolveAppUser: returning JWT fallback =", res);
+    return res;
 }
 export function resolveOfficeFilter(user, requestedOffice) {
     const requested = requestedOffice?.trim();
     if (isOwner(user) || isAdmin(user)) {
-        return requested || user?.office?.trim() || "Semua";
+        const rawOffice = requested || user?.office?.trim() || "Semua";
+        return rawOffice === "Semua" ? "Semua" : mapLocationToOffice(rawOffice);
     }
     if (user?.office?.trim()) {
-        return user.office.trim();
+        return mapLocationToOffice(user.office.trim());
     }
-    return requested || "Semua";
+    const rawOffice = requested || "Semua";
+    return rawOffice === "Semua" ? "Semua" : mapLocationToOffice(rawOffice);
 }
 export function assertScanAccess(user, requestedOffice) {
     if (!user) {
         return { ok: false, status: 401, message: "User tidak ditemukan" };
     }
-    if (isOwner(user)) {
-        const office = user.office?.trim() || requestedOffice?.trim();
-        if (!office) {
-            return {
-                ok: false,
-                status: 403,
-                message: "Pilih wilayah/lokasi terlebih dahulu.",
-            };
-        }
-        return { ok: true, office };
-    }
-    const office = user.office?.trim();
-    if (!office) {
+    if (isAdmin(user)) {
         return {
             ok: false,
             status: 403,
-            message: "Akun tidak memiliki office. Scan tidak diizinkan.",
+            message: "Admin tidak diperbolehkan melakukan scan input fisik.",
         };
     }
-    return { ok: true, office };
+    const rawOffice = requestedOffice?.trim() || user.office?.trim();
+    if (!rawOffice) {
+        return {
+            ok: false,
+            status: 403,
+            message: "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+        };
+    }
+    // Return rawOffice as-is; async mapping is handled by the caller (route)
+    return { ok: true, office: rawOffice };
 }

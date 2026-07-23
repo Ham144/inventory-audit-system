@@ -1,25 +1,25 @@
 import { useEffect, useMemo, useState, useRef } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, redirect, useNavigate } from "react-router";
 import {
-  History,
+  AlertCircle,
   ArrowLeft,
   Search,
   MapPin,
-  Hash,
-  Calendar,
   Package,
+  Layers,
+  Calendar,
+  PenLine,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { DocsShell } from "~/components/DocsShell";
 import { useUserInfo } from "~/store";
+import { CompareApi } from "~/api/compare.api";
 import { getScans } from "~/api/opname.api";
 import locationApi from "~/api/LocationApi";
 import {
   compareOfficeScope,
-  isOwner,
   adminCanPickOffice,
   userOffice,
-  userSessionLabel,
 } from "~/libs/user-access";
 import {
   normalizeLocationList,
@@ -30,18 +30,6 @@ import {
 } from "~/libs/location";
 import { getAdminDefaultOffice, setAdminDefaultOffice } from "~/libs/app-prefs";
 
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("id-ID", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function toDateInputValue(date: Date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -49,32 +37,34 @@ function toDateInputValue(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
-export default function MyLogsPage() {
-  const navigate = useNavigate();
+export default function SelisihPage() {
   const { userInfo } = useUserInfo();
   const showOfficePicker = adminCanPickOffice(userInfo);
   const [pickedOffice, setPickedOffice] = useState("Semua");
   const officeDefaultApplied = useRef(false);
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
+  
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRak, setSelectedRak] = useState("Semua");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const navigate = useNavigate();
 
   const compareOffice = compareOfficeScope(
     userInfo,
     showOfficePicker ? pickedOffice : undefined,
   );
 
-  const scansQuery = useQuery({
-    queryKey: ["my-scans", compareOffice],
-    queryFn: () =>
-      getScans({
-        office: compareOffice,
-      }),
+  const navQuery = useQuery({
+    queryKey: ["compare", "nav", compareOffice, selectedRak, dateFrom, dateTo],
+    queryFn: () => CompareApi.fetchNavCompareList({ 
+      office: compareOffice,
+      rak: selectedRak !== "Semua" ? selectedRak : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    }),
     enabled: Boolean(userInfo?.username),
-    refetchInterval: 5000,
   });
 
   useEffect(() => {
@@ -102,7 +92,11 @@ export default function MyLogsPage() {
   }, [showOfficePicker]);
 
   useEffect(() => {
-    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) {
+    if (
+      !showOfficePicker ||
+      locations.length === 0 ||
+      officeDefaultApplied.current
+    ) {
       return;
     }
     officeDefaultApplied.current = true;
@@ -123,47 +117,37 @@ export default function MyLogsPage() {
     }
   }, [showOfficePicker, locations, pickedOffice]);
 
+  const scansQuery = useQuery({
+    queryKey: ["my-scans", compareOffice],
+    queryFn: () => getScans({ office: compareOffice }),
+    enabled: Boolean(userInfo?.username),
+  });
+
+  const uniqueRaks = useMemo(() => {
+    const data = scansQuery.data ?? [];
+    const raks = data.map((row: any) => String(row.rak));
+    return Array.from(new Set(raks)).sort((a, b) => Number(a) - Number(b));
+  }, [scansQuery.data]);
+
   const filteredLogs = useMemo(() => {
-    const username = userInfo?.username?.trim().toLowerCase();
-    if (!username) return [];
-
+    if (!userInfo?.username) return [];
     const search = searchTerm.trim().toLowerCase();
-    const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
-    const toMs = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : null;
 
-    return (scansQuery.data ?? []).filter((row) => {
-      if (!showOfficePicker && row.operator?.trim().toLowerCase() !== username) return false;
-      
-      if (selectedRak !== "Semua" && String(row.rak) !== selectedRak) return false;
+    return (navQuery.data ?? []).filter((row) => {
+      // ONLY SHOW DISCREPANCIES!
+      const statusLower = (row.status || "").toLowerCase();
+      if (statusLower !== "selisih") return false;
+      if (row.physicalQty === row.systemQty) return false;
+      if (row.pendingRakCount > 0) return false;
 
       if (search) {
         const haystack = `${row.sku} ${row.name}`.toLowerCase();
         if (!haystack.includes(search)) return false;
       }
 
-      if (fromMs !== null || toMs !== null) {
-        const created = new Date(row.createdAt).getTime();
-        if (fromMs !== null && created < fromMs) return false;
-        if (toMs !== null && created > toMs) return false;
-      }
-
       return true;
     });
-  }, [scansQuery.data, userInfo?.username, searchTerm, dateFrom, dateTo, selectedRak, showOfficePicker]);
-
-  const uniqueRaks = useMemo(() => {
-    const data = scansQuery.data ?? [];
-    const validLogs = data.filter((row) => showOfficePicker || row.operator?.trim().toLowerCase() === userInfo?.username?.trim().toLowerCase());
-    const raks = validLogs.map((log) => String(log.rak));
-    return Array.from(new Set(raks)).sort((a, b) => Number(a) - Number(b));
-  }, [scansQuery.data, showOfficePicker, userInfo?.username]);
-
-  const totalQty = useMemo(
-    () => filteredLogs.reduce((sum, row) => sum + (row.qty ?? 0), 0),
-    [filteredLogs],
-  );
-
-  const today = toDateInputValue(new Date());
+  }, [navQuery.data, userInfo?.username, searchTerm]);
 
   if (userInfo === undefined) {
     return (
@@ -173,9 +157,15 @@ export default function MyLogsPage() {
     );
   }
 
+  const today = toDateInputValue(new Date());
+
   return (
-    <DocsShell title="Riwayat Scan" subtitle="My Logs" showDocSidebar={false}>
-      <div className="max-w-5xl space-y-6">
+    <DocsShell
+      title="Daftar Selisih"
+      subtitle="Cek Ulang"
+      showDocSidebar={false}
+    >
+      <div className="max-w-6xl space-y-6">
         <Link
           to="/input"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600"
@@ -186,17 +176,15 @@ export default function MyLogsPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-2xl bg-slate-100 text-slate-600">
-              <History className="h-6 w-6" />
+            <div className="p-3 rounded-2xl bg-red-100 text-red-600">
+              <AlertCircle className="h-6 w-6" />
             </div>
             <div>
               <h1 className="text-xl font-black text-slate-900">
-                Riwayat Scan {showOfficePicker ? "Semua Operator" : "Saya"}
+                Daftar Selisih (Cek Ulang)
               </h1>
               <p className="text-sm text-slate-500">
-                Total qty terscan:{" "}
-                <strong className="text-slate-700">{totalQty}</strong> item dari{" "}
-                {filteredLogs.length} baris
+                SKU berikut tidak sesuai dengan stok sistem (NAV).
               </p>
             </div>
           </div>
@@ -207,12 +195,6 @@ export default function MyLogsPage() {
                 Baris
               </p>
               <p className="font-black text-slate-900">{filteredLogs.length}</p>
-            </div>
-            <div className="bg-white border border-slate-200 rounded-xl px-4 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">
-                Total Qty
-              </p>
-              <p className="font-black text-indigo-700">{totalQty}</p>
             </div>
           </div>
         </div>
@@ -234,53 +216,20 @@ export default function MyLogsPage() {
               />
             </div>
 
-            {showOfficePicker && (
-              <div className="flex flex-col gap-1.5 min-w-[180px]">
-                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                  <MapPin className="h-3 w-3 text-indigo-500" />
-                  Wilayah / Gudang
-                </label>
-                <select
-                  value={pickedOffice}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setPickedOffice(value);
-                    setAdminDefaultOffice(value === "Semua" ? "" : value);
-                    setSelectedRak("Semua");
-                  }}
-                  disabled={isLoadingLocations}
-                  className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
-                >
-                  {isLoadingLocations ? (
-                    <option value="Semua">Memuat...</option>
-                  ) : (
-                    <>
-                      <option value="Semua">Semua Wilayah</option>
-                      {locations.map((loc) => (
-                        <option key={loc._id ?? loc.name} value={loc.name}>
-                          {loc.name}
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </select>
-              </div>
-            )}
-
             <div className="flex flex-col gap-1.5 min-w-[120px]">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Hash className="h-3 w-3 text-indigo-500" />
-                Rak
+                <Layers className="h-3 w-3 text-indigo-500" />
+                No Rak
               </label>
               <select
                 value={selectedRak}
                 onChange={(e) => setSelectedRak(e.target.value)}
                 className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
               >
-                <option value="Semua">Semua</option>
-                {uniqueRaks.map((rakNo) => (
-                  <option key={rakNo} value={rakNo}>
-                    Rak {rakNo}
+                <option value="Semua">Semua Rak</option>
+                {uniqueRaks.map((r) => (
+                  <option key={r} value={String(r)}>
+                    Rak {r}
                   </option>
                 ))}
               </select>
@@ -303,7 +252,7 @@ export default function MyLogsPage() {
             <div className="flex flex-col gap-1.5 min-w-[140px]">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <Calendar className="h-3 w-3 text-indigo-500" />
-                Sampai Tanggal
+                Sampai
               </label>
               <input
                 type="date"
@@ -314,25 +263,57 @@ export default function MyLogsPage() {
                 className="input input-bordered input-sm w-full bg-slate-50 font-semibold"
               />
             </div>
+
+            {showOfficePicker && (
+              <div className="flex flex-col gap-1.5 min-w-[180px]">
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <MapPin className="h-3 w-3 text-indigo-500" />
+                  Wilayah
+                </label>
+                <select
+                  value={pickedOffice}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setPickedOffice(value);
+                    setAdminDefaultOffice(value === "Semua" ? "" : value);
+                  }}
+                  disabled={isLoadingLocations}
+                  className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
+                >
+                  {isLoadingLocations ? (
+                    <option value="Semua">Memuat...</option>
+                  ) : (
+                    <>
+                      <option value="Semua">Semua Wilayah</option>
+                      {locations.map((loc) => (
+                        <option key={loc._id ?? loc.name} value={loc.name}>
+                          {loc.name}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Table */}
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-          {scansQuery.isLoading ? (
+          {navQuery.isLoading ? (
             <div className="flex justify-center py-16">
               <span className="loading loading-spinner loading-lg text-indigo-500" />
             </div>
-          ) : scansQuery.isError ? (
+          ) : navQuery.isError ? (
             <div className="p-8 text-center text-red-600 text-sm">
-              Gagal memuat riwayat scan.
+              Gagal memuat data selisih.
             </div>
           ) : filteredLogs.length === 0 ? (
             <div className="p-12 text-center">
-              <Package className="h-10 w-10 text-slate-300 mx-auto mb-3" />
-              <p className="font-semibold text-slate-700">Belum ada riwayat</p>
+              <Package className="h-10 w-10 text-emerald-300 mx-auto mb-3" />
+              <p className="font-semibold text-emerald-700">Tidak ada selisih</p>
               <p className="text-sm text-slate-400 mt-1">
-                Scan barang di halaman input untuk melihat data di sini.
+                Wah, sepertinya belum ada atau tidak ada lagi SKU yang selisih.
               </p>
             </div>
           ) : (
@@ -340,32 +321,43 @@ export default function MyLogsPage() {
               <table className="table table-sm">
                 <thead>
                   <tr className="text-slate-500 bg-slate-50">
-                    <th>Waktu</th>
                     <th>SKU</th>
                     <th>Nama</th>
-                    <th className="text-center">Rak</th>
-                    <th className="text-right">Qty</th>
+                    <th className="text-right">Total Fisik (Scan)</th>
+                    <th>Status</th>
                     <th>Office</th>
+                    <th className="text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredLogs.map((row) => (
-                    <tr key={row.id} className="hover:bg-slate-50/80">
-                      <td className="text-slate-600 whitespace-nowrap text-xs">
-                        {formatDateTime(row.createdAt)}
-                      </td>
+                    <tr key={row.id} className="hover:bg-slate-50/80 group">
                       <td className="font-mono font-semibold text-indigo-700">
                         {row.sku}
                       </td>
                       <td className="text-slate-700 max-w-[200px] truncate">
                         {row.name}
                       </td>
-                      <td className="text-center font-semibold">{row.rak}</td>
-                      <td className="text-right font-bold text-slate-900">
-                        {row.qty ?? 0}
+                      <td className="text-right font-black text-slate-900">
+                        {row.physicalQty ?? 0}
+                      </td>
+                      <td className="text-xs">
+                        <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded border border-red-200">
+                          SELISIH
+                        </span>
                       </td>
                       <td className="text-slate-600 text-xs">
                         {row.office ?? "—"}
+                      </td>
+                      <td className="text-right">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/input?sku=${row.sku}`)}
+                          className="btn btn-xs btn-primary bg-indigo-600 hover:bg-indigo-700 border-none rounded-lg text-[10px] font-bold opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                        >
+                          <PenLine className="h-3 w-3" />
+                          Input
+                        </button>
                       </td>
                     </tr>
                   ))}

@@ -1,9 +1,10 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
+import { mapLocationToOfficeAsync, mapOfficeToLocation, } from "../utils/office-mapping.js";
 import { reconcileApprovalAfterGroupChange, deleteScanQtyApprovals, toScanGroups, readOffice, } from "../utils/scan-approval.js";
-import { assertScanAccess, isOwner, readJwtUsername, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
-import { listUsers, syncUserProfile, updateUserRole, } from "../utils/user-store.js";
+import { assertScanAccess, isOwner, canAccessAdmin, readJwtUsername, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
+import { listUsers, syncUserProfile, updateUserRole, updateUserOffice, } from "../utils/user-store.js";
 import { parseCatalogList, resolveStockQty, toCompareItemSeed, } from "../types/catalog.js";
 import { filterHiddenProducts, isHiddenProductSku, } from "../utils/product-filter.js";
 const router = express.Router();
@@ -40,7 +41,7 @@ router.post("/me/sync", async (req, res) => {
 router.get("/users", async (req, res) => {
     try {
         const appUser = await resolveAppUser(req);
-        if (!isOwner(appUser)) {
+        if (!canAccessAdmin(appUser)) {
             return res.status(403).json({ message: "Akses ditolak" });
         }
         const users = await listUsers();
@@ -53,7 +54,8 @@ router.get("/users", async (req, res) => {
 router.patch("/users/:username/role", async (req, res) => {
     try {
         const appUser = await resolveAppUser(req);
-        if (!isOwner(appUser)) {
+        console.log("DEBUG ROLE PATCH: appUser =", appUser, "isOwner =", isOwner(appUser));
+        if (!canAccessAdmin(appUser)) {
             return res.status(403).json({ message: "Akses ditolak" });
         }
         const targetUsername = req.params.username?.trim();
@@ -81,6 +83,27 @@ router.patch("/users/:username/role", async (req, res) => {
             return res.status(400).json({ message });
         }
         return res.status(500).json({ error: message });
+    }
+});
+router.patch("/users/:username/office", async (req, res) => {
+    try {
+        const appUser = await resolveAppUser(req);
+        if (!canAccessAdmin(appUser)) {
+            return res.status(403).json({ message: "Akses ditolak" });
+        }
+        const targetUsername = req.params.username?.trim();
+        if (!targetUsername) {
+            return res.status(400).json({ message: "Username wajib diisi" });
+        }
+        const { office } = req.body;
+        const updated = await updateUserOffice(targetUsername, office ?? null);
+        if (!updated) {
+            return res.status(404).json({ message: "User tidak ditemukan" });
+        }
+        return res.json(updated);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
     }
 });
 const databaseCenter = () => process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
@@ -124,7 +147,10 @@ async function getOrCreateActiveSession(office) {
     }
     return session;
 }
-async function sessionScopeWhere(office) {
+async function sessionScopeWhere(officeCode) {
+    const office = officeCode === "Semua"
+        ? "Semua"
+        : await mapLocationToOfficeAsync(officeCode);
     if (office === "Semua") {
         const activeSessions = await prisma.opnameSession.findMany({
             where: { status: "ONGOING" },
@@ -138,7 +164,8 @@ async function sessionScopeWhere(office) {
 // 1. GET active session
 router.get("/session/active", async (req, res) => {
     try {
-        const office = req.query.office || "01";
+        const officeCode = req.query.office || "01";
+        const office = await mapLocationToOfficeAsync(officeCode);
         const session = await getOrCreateActiveSession(office);
         return res.json(session);
     }
@@ -150,7 +177,7 @@ router.get("/session/active", async (req, res) => {
 router.post("/session/create", async (req, res) => {
     try {
         const { name, office } = req.body;
-        const loc = office || "01";
+        const loc = await mapLocationToOfficeAsync(office || "01");
         await prisma.opnameSession.updateMany({
             where: {
                 office: loc,
@@ -184,14 +211,32 @@ router.post("/scan", async (req, res) => {
             return res.status(access.status).json({ message: access.message });
         }
         if (isHiddenProductSku(sku)) {
-            return res.status(400).json({ message: "SKU tidak tersedia untuk opname" });
+            return res
+                .status(400)
+                .json({ message: "SKU tidak tersedia untuk opname" });
         }
-        const loc = access.office;
-        const session = await getOrCreateActiveSession(loc);
+        // Resolve office asynchronously to avoid cache-miss on server startup
+        // (mapLocationToOffice synchronous version may return location code if cache is empty)
+        const rawOffice = office?.trim() || appUser?.office?.trim();
+        if (!rawOffice) {
+            return res
+                .status(403)
+                .json({
+                message: "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+            });
+        }
+        const loc = await mapLocationToOfficeAsync(rawOffice);
+        if (!loc?.trim()) {
+            return res.status(400).json({ message: "Office/lokasi tidak valid" });
+        }
         const operator = readJwtUsername(req.user);
         if (!operator) {
             return res.status(401).json({ message: "Unauthorized" });
         }
+        if (appUser && !appUser.office && loc) {
+            await updateUserOffice(operator, loc);
+        }
+        const session = await getOrCreateActiveSession(loc);
         const rakNum = Number(rak) || 1;
         const qtyNum = Number(qty) || 0;
         const existing = await prisma.scanLog.findFirst({
@@ -298,7 +343,7 @@ router.post("/sync", async (req, res) => {
                     });
                     loc = readOffice(itemSession ?? {});
                 }
-                const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${loc}`);
+                const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`);
                 const realQty = resolveStockQty(response.data);
                 const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                 const updated = await prisma.compareItem.update({
@@ -325,7 +370,10 @@ router.post("/sync", async (req, res) => {
 // 6. POST reset active session
 router.post("/reset", async (req, res) => {
     try {
-        const office = req.body.office || "01";
+        const officeCode = req.body.office || "01";
+        const office = officeCode === "Semua"
+            ? "Semua"
+            : await mapLocationToOfficeAsync(officeCode);
         if (office === "Semua") {
             const activeSessions = await prisma.opnameSession.findMany({
                 where: { status: "ONGOING" },
@@ -398,7 +446,7 @@ export function startOpnameCron() {
                         continue;
                     }
                     try {
-                        const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${readOffice(session)}`);
+                        const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`);
                         const realQty = resolveStockQty(response.data);
                         const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                         await prisma.compareItem.update({

@@ -17,10 +17,14 @@ export async function syncUserProfile(input) {
     const office = input.office?.trim() || null;
     const assignOwner = shouldAssignOwnerRole(input);
     const result = await pool.query(`INSERT INTO "User" (username, role, office, "createdAt", "updatedAt")
-     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE NULL END, $2, NOW(), NOW())
+     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE 'operator' END, $2, NOW(), NOW())
      ON CONFLICT (username)
      DO UPDATE SET
        office = COALESCE(EXCLUDED.office, "User".office),
+       role = CASE
+         WHEN $3 THEN 'owner'
+         ELSE COALESCE("User".role, 'operator')
+       END,
        "updatedAt" = NOW()
      RETURNING username, role, office`, [username, office, assignOwner]);
     return result.rows[0];
@@ -48,5 +52,13 @@ export async function updateUserRole(username, role) {
      SET role = $2, "updatedAt" = NOW()
      WHERE username = $1
      RETURNING username, role, office`, [username.trim(), normalizedRole]);
+    return result.rows[0] ?? null;
+}
+export async function updateUserOffice(username, office) {
+    const normalizedOffice = office?.trim() || null;
+    const result = await pool.query(`UPDATE "User"
+     SET office = $2, "updatedAt" = NOW()
+     WHERE username = $1
+     RETURNING username, role, office`, [username.trim(), normalizedOffice]);
     return result.rows[0] ?? null;
 }

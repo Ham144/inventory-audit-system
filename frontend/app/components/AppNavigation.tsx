@@ -1,6 +1,6 @@
-import { History, ScanLine, Settings, Shield } from "lucide-react";
+import { History, ScanLine, Settings, Shield, AlertCircle } from "lucide-react";
 import { Link, useLocation } from "react-router";
-import { canAccessAdmin } from "~/libs/user-access";
+import { canAccessAdmin, isOwner } from "~/libs/user-access";
 import { useUserInfo } from "~/store";
 
 const NAV_ITEMS = [
@@ -23,10 +23,16 @@ const NAV_ITEMS = [
     show: () => true,
   },
   {
+    path: "/selisih",
+    label: "Cek Selisih",
+    icon: AlertCircle,
+    show: () => true,
+  },
+  {
     path: "/settings",
     label: "Settings",
     icon: Settings,
-    show: canAccessAdmin,
+    show: isOwner,
   },
 ] as const;
 

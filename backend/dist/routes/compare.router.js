@@ -1,10 +1,11 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
+import { mapOfficeToLocation, mapLocationToOfficeAsync } from "../utils/office-mapping.js";
 import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, validateDateRange, } from "../utils/compare-filters.js";
-import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, } from "../utils/scan-approval.js";
+import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, } from "../utils/scan-approval.js";
 import { resolveStockQty } from "../types/catalog.js";
-import { canAccessAdmin, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
+import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
 const databaseCenter = () => process.env.DATABASE_CENTER;
 const SESSION_OFFICE_SELECT = { office: true };
 async function getOrCreateActiveSession(office) {
@@ -25,7 +26,10 @@ async function getOrCreateActiveSession(office) {
     }
     return session;
 }
-async function sessionScopeWhere(office) {
+async function sessionScopeWhere(officeCode) {
+    const office = officeCode === "Semua"
+        ? "Semua"
+        : await mapLocationToOfficeAsync(officeCode);
     if (office === "Semua") {
         const activeSessions = await prisma.opnameSession.findMany({
             where: { status: "ONGOING" },
@@ -44,8 +48,9 @@ function resolveApprover(req) {
     return user?.username ?? user?.usernameLdap ?? "admin";
 }
 async function fetchNavStockQty(sku, office, req) {
+    const locationCode = await mapOfficeToLocation(office);
     const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock`, {
-        params: { No: sku, locationCode: office },
+        params: { No: sku, locationCode },
         headers: {
             cookie: req.headers.cookie ?? "",
         },
@@ -74,6 +79,7 @@ async function buildNavRow(item, rakStats, physicalQtyOverride) {
         resolvedRakCount: stats.resolvedRakCount,
         pendingRakCount: stats.pendingRakCount,
         sessionId: item.sessionId,
+        note: item.note ?? null,
     };
 }
 async function reconcileStaleApprovals(whereClause) {
@@ -176,12 +182,17 @@ async function buildNavCompareRows(whereClause) {
                 sku: true,
                 office: true,
                 rak: true,
+                approval: {
+                    select: {
+                        id: true,
+                    },
+                },
             },
         }),
     ]);
     const physicalQtyByKey = new Map();
-    const resolvedRakByKey = new Map();
     const raksWithScansByKey = new Map();
+    const raksWithPendingScansByKey = new Map();
     for (const scan of scans) {
         const office = readOffice(scan);
         const key = navAggregateKey(scan.sessionId, scan.sku, office);
@@ -189,18 +200,23 @@ async function buildNavCompareRows(whereClause) {
             raksWithScansByKey.set(key, new Set());
         }
         raksWithScansByKey.get(key).add(scan.rak);
+        if (!scan.approval) {
+            if (!raksWithPendingScansByKey.has(key)) {
+                raksWithPendingScansByKey.set(key, new Set());
+            }
+            raksWithPendingScansByKey.get(key).add(scan.rak);
+        }
     }
     for (const approval of approvals) {
         const key = navAggregateKey(approval.sessionId, approval.sku, approval.office);
         physicalQtyByKey.set(key, (physicalQtyByKey.get(key) ?? 0) + approval.approvedQty);
-        resolvedRakByKey.set(key, (resolvedRakByKey.get(key) ?? 0) + 1);
     }
     return Promise.all(items.map((item) => {
         const office = readOffice(item.session);
         const key = navAggregateKey(item.sessionId, item.sku, office);
         const raksWithScans = raksWithScansByKey.get(key)?.size ?? 0;
-        const resolvedRakCount = resolvedRakByKey.get(key) ?? 0;
-        const pendingRakCount = Math.max(0, raksWithScans - resolvedRakCount);
+        const pendingRakCount = raksWithPendingScansByKey.get(key)?.size ?? 0;
+        const resolvedRakCount = Math.max(0, raksWithScans - pendingRakCount);
         const physicalQty = physicalQtyByKey.get(key) ?? 0;
         return buildNavRow(item, { resolvedRakCount, pendingRakCount }, physicalQty);
     }));
@@ -222,13 +238,13 @@ async function skusForRakFilter(whereClause, rak) {
 async function navKeysWithScansInDateRange(whereClause, dateFrom, dateTo) {
     const from = new Date(`${dateFrom}T00:00:00`);
     const to = new Date(`${dateTo}T23:59:59`);
-    const scans = await prisma.scanLog.findMany({
+    const scans = (await prisma.scanLog.findMany({
         where: {
             ...whereClause,
             createdAt: { gte: from, lte: to },
         },
         select: { sessionId: true, sku: true, office: true },
-    });
+    }));
     const keys = new Set();
     for (const s of scans) {
         const office = readOffice(s);
@@ -239,9 +255,7 @@ async function navKeysWithScansInDateRange(whereClause, dateFrom, dateTo) {
 const router = express.Router();
 async function scopedCompareFilters(req) {
     const filters = parseCompareQueryFilters(req.query);
-    const appUser = await resolveAppUser(req);
-    const office = resolveOfficeFilter(appUser, filters.office);
-    return { ...filters, office };
+    return { ...filters };
 }
 router.get("/scan", async (req, res) => {
     try {
@@ -298,6 +312,110 @@ router.post("/scan/approve", async (req, res) => {
         return res.status(500).json({ error: errorMessage(error) });
     }
 });
+async function findScanCompareRowForScan(scan) {
+    const rows = await buildScanCompareRows({ sessionId: scan.sessionId });
+    return (rows.find((r) => r.sku === scan.sku && r.rak === scan.rak && r.office === scan.office) ?? null);
+}
+async function assertAdminScanMutation(req, scanLogId) {
+    const appUser = await resolveAppUser(req);
+    if (!canAccessAdmin(appUser)) {
+        return {
+            ok: false,
+            status: 403,
+            error: "Hanya admin atau owner yang dapat mengubah scan",
+        };
+    }
+    const scan = await prisma.scanLog.findUnique({
+        where: { id: scanLogId },
+    });
+    if (!scan) {
+        return { ok: false, status: 404, error: "Scan tidak ditemukan" };
+    }
+    const session = await prisma.opnameSession.findUnique({
+        where: { id: scan.sessionId },
+    });
+    if (!session || session.status !== "ONGOING") {
+        return {
+            ok: false,
+            status: 400,
+            error: "Sesi opname tidak aktif",
+        };
+    }
+    return { ok: true, scan, scanGroup: toScanGroup(scan) };
+}
+router.patch("/scan/:scanLogId", async (req, res) => {
+    try {
+        const scanLogId = String(req.params.scanLogId);
+        const access = await assertAdminScanMutation(req, scanLogId);
+        if (!access.ok) {
+            return res.status(access.status).json({ error: access.error });
+        }
+        const { qty } = req.body;
+        const qtyNum = Number(qty);
+        if (!Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isInteger(qtyNum)) {
+            return res
+                .status(400)
+                .json({ error: "qty harus bilangan bulat positif" });
+        }
+        const updated = await prisma.scanLog.update({
+            where: { id: scanLogId },
+            data: { qty: qtyNum },
+        });
+        const groupScans = await prisma.scanLog.findMany({
+            where: {
+                sessionId: updated.sessionId,
+                sku: updated.sku,
+                rak: updated.rak,
+                office: access.scanGroup.office,
+            },
+        });
+        await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
+        const row = await findScanCompareRowForScan({
+            sessionId: updated.sessionId,
+            sku: updated.sku,
+            rak: updated.rak,
+            office: access.scanGroup.office,
+        });
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
+router.delete("/scan/:scanLogId", async (req, res) => {
+    try {
+        const scanLogId = String(req.params.scanLogId);
+        const access = await assertAdminScanMutation(req, scanLogId);
+        if (!access.ok) {
+            return res.status(access.status).json({ error: access.error });
+        }
+        const { scan, scanGroup } = access;
+        await prisma.scanLog.delete({ where: { id: scanLogId } });
+        const groupScans = await prisma.scanLog.findMany({
+            where: {
+                sessionId: scan.sessionId,
+                sku: scan.sku,
+                rak: scan.rak,
+                office: scanGroup.office,
+            },
+        });
+        if (groupScans.length === 0) {
+            await deleteGroupApproval(scan.sessionId, scan.sku, scan.rak, scanGroup.office);
+            return res.json(null);
+        }
+        await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
+        const row = await findScanCompareRowForScan({
+            sessionId: scan.sessionId,
+            sku: scan.sku,
+            rak: scan.rak,
+            office: scanGroup.office,
+        });
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
 router.get("/nav", async (req, res) => {
     try {
         const filters = await scopedCompareFilters(req);
@@ -341,6 +459,39 @@ router.post("/nav/:compareItemId/check", async (req, res) => {
                 status,
                 updatedAt: new Date(),
             },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        const row = await buildNavRow(updated);
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
+router.patch("/nav/:compareItemId/note", async (req, res) => {
+    try {
+        const appUser = await resolveAppUser(req);
+        if (!canAccessAdmin(appUser)) {
+            return res.status(403).json({
+                error: "Hanya admin atau owner yang dapat mengubah catatan",
+            });
+        }
+        const compareItemId = String(req.params.compareItemId);
+        const { note } = req.body;
+        const item = await prisma.compareItem.findUnique({
+            where: { id: compareItemId },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        if (!item) {
+            return res.status(404).json({ error: "Compare item tidak ditemukan" });
+        }
+        const trimmed = typeof note === "string" ? note.trim() : note === null ? "" : undefined;
+        if (trimmed === undefined) {
+            return res.status(400).json({ error: "note wajib berupa string" });
+        }
+        const updated = await prisma.compareItem.update({
+            where: { id: item.id },
+            data: { note: trimmed || null },
             include: { session: { select: SESSION_OFFICE_SELECT } },
         });
         const row = await buildNavRow(updated);

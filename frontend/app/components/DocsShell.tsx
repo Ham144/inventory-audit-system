@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { Layers, BookOpen, LogIn } from "lucide-react";
 import { useUserInfo } from "~/store";
 import { AppNavigation } from "./AppNavigation";
+import { UserSessionBadge } from "./UserSessionBadge";
 
 const DOC_SECTIONS = [
   { id: "ringkasan", label: "Ringkasan" },
@@ -54,7 +55,7 @@ export function DocsShell({
             </div>
           </Link>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             {!isLoggedIn ? (
               <Link
                 to="/login"
@@ -64,7 +65,11 @@ export function DocsShell({
                 Login
               </Link>
             ) : (
-              <AppNavigation />
+              <>
+                <AppNavigation />
+                <div className="hidden sm:block h-6 w-px bg-slate-200" />
+                <UserSessionBadge />
+              </>
             )}
           </div>
         </div>

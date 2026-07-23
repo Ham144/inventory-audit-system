@@ -1,7 +1,11 @@
 import express, { type Request, type Response } from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapLocationToOffice, mapLocationToOfficeAsync, mapOfficeToLocation } from "../utils/office-mapping.js";
+import {
+  mapLocationToOffice,
+  mapLocationToOfficeAsync,
+  mapOfficeToLocation,
+} from "../utils/office-mapping.js";
 
 type SessionScopeWhere =
   | { sessionId: string }
@@ -15,6 +19,7 @@ import {
 import {
   assertScanAccess,
   isOwner,
+  canAccessAdmin,
   readJwtUsername,
   resolveAppUser,
   resolveOfficeFilter,
@@ -23,6 +28,7 @@ import {
   listUsers,
   syncUserProfile,
   updateUserRole,
+  updateUserOffice,
 } from "../utils/user-store.js";
 import {
   parseCatalogList,
@@ -76,7 +82,7 @@ router.post("/me/sync", async (req: any, res: Response) => {
 router.get("/users", async (req: any, res: Response) => {
   try {
     const appUser = await resolveAppUser(req);
-    if (!isOwner(appUser)) {
+    if (!canAccessAdmin(appUser)) {
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
@@ -90,7 +96,13 @@ router.get("/users", async (req: any, res: Response) => {
 router.patch("/users/:username/role", async (req: any, res: Response) => {
   try {
     const appUser = await resolveAppUser(req);
-    if (!isOwner(appUser)) {
+    console.log(
+      "DEBUG ROLE PATCH: appUser =",
+      appUser,
+      "isOwner =",
+      isOwner(appUser),
+    );
+    if (!canAccessAdmin(appUser)) {
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
@@ -122,6 +134,30 @@ router.patch("/users/:username/role", async (req: any, res: Response) => {
       return res.status(400).json({ message });
     }
     return res.status(500).json({ error: message });
+  }
+});
+
+router.patch("/users/:username/office", async (req: any, res: Response) => {
+  try {
+    const appUser = await resolveAppUser(req);
+    if (!canAccessAdmin(appUser)) {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    const targetUsername = (req.params.username as string)?.trim();
+    if (!targetUsername) {
+      return res.status(400).json({ message: "Username wajib diisi" });
+    }
+
+    const { office } = req.body as { office?: string | null };
+    const updated = await updateUserOffice(targetUsername, office ?? null);
+    if (!updated) {
+      return res.status(404).json({ message: "User tidak ditemukan" });
+    }
+
+    return res.json(updated);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
   }
 });
 
@@ -179,8 +215,13 @@ async function getOrCreateActiveSession(office: string) {
   return session;
 }
 
-async function sessionScopeWhere(officeCode: string): Promise<SessionScopeWhere> {
-  const office = officeCode === "Semua" ? "Semua" : await mapLocationToOfficeAsync(officeCode);
+async function sessionScopeWhere(
+  officeCode: string,
+): Promise<SessionScopeWhere> {
+  const office =
+    officeCode === "Semua"
+      ? "Semua"
+      : await mapLocationToOfficeAsync(officeCode);
   if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
@@ -249,7 +290,7 @@ router.post("/scan", async (req: any, res: Response) => {
       name?: string;
       rak?: number | string;
       qty?: number | string;
-      office?: string;
+      office: string;
     };
     const access = assertScanAccess(appUser, office);
     if (!access.ok) {
@@ -257,16 +298,38 @@ router.post("/scan", async (req: any, res: Response) => {
     }
 
     if (isHiddenProductSku(sku)) {
-      return res.status(400).json({ message: "SKU tidak tersedia untuk opname" });
+      return res
+        .status(400)
+        .json({ message: "SKU tidak tersedia untuk opname" });
     }
 
-    const loc = access.office;
+    // Resolve office asynchronously to avoid cache-miss on server startup
+    // (mapLocationToOffice synchronous version may return location code if cache is empty)
+    const rawOffice = office?.trim() || appUser?.office?.trim();
+    if (!rawOffice) {
+      return res
+        .status(403)
+        .json({
+          message:
+            "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+        });
+    }
 
-    const session = await getOrCreateActiveSession(loc);
+    const loc = await mapLocationToOfficeAsync(rawOffice);
+    if (!loc?.trim()) {
+      return res.status(400).json({ message: "Office/lokasi tidak valid" });
+    }
+
     const operator = readJwtUsername(req.user);
     if (!operator) {
       return res.status(401).json({ message: "Unauthorized" });
     }
+
+    if (appUser && !appUser.office && loc) {
+      await updateUserOffice(operator, loc);
+    }
+
+    const session = await getOrCreateActiveSession(loc);
     const rakNum = Number(rak) || 1;
     const qtyNum = Number(qty) || 0;
 
@@ -355,9 +418,7 @@ router.get("/comparison", async (req: Request, res: Response) => {
       },
     });
 
-    return res.json(
-      items.filter((item) => !isHiddenProductSku(item.sku)),
-    );
+    return res.json(items.filter((item) => !isHiddenProductSku(item.sku)));
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }
@@ -421,7 +482,10 @@ router.post("/sync", async (req: Request, res: Response) => {
 router.post("/reset", async (req: Request, res: Response) => {
   try {
     const officeCode = (req.body as { office?: string }).office || "01";
-    const office = officeCode === "Semua" ? "Semua" : await mapLocationToOfficeAsync(officeCode);
+    const office =
+      officeCode === "Semua"
+        ? "Semua"
+        : await mapLocationToOfficeAsync(officeCode);
 
     if (office === "Semua") {
       const activeSessions = await prisma.opnameSession.findMany({
@@ -485,9 +549,7 @@ router.get("/scans", async (req: any, res: Response) => {
       orderBy: { createdAt: "desc" },
     });
 
-    return res.json(
-      scans.filter((scan) => !isHiddenProductSku(scan.sku)),
-    );
+    return res.json(scans.filter((scan) => !isHiddenProductSku(scan.sku)));
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }

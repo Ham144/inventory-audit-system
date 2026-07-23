@@ -73,7 +73,11 @@ function unwrapLocationArray(response: unknown): unknown[] {
 
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) return candidate;
-    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
       const nested = candidate as Record<string, unknown>;
       const nestedCandidates = [
         nested.data,
@@ -123,8 +127,10 @@ export async function fetchAndCacheMappings() {
     const response = await axiosInstance.get<MappingItem[]>("/api/mappings");
     cachedMappings = response.data;
     mappingsFetched = true;
+    return cachedMappings;
   } catch (err) {
     console.error("Failed to fetch mappings on frontend:", err);
+    return [];
   }
 }
 
@@ -133,31 +139,14 @@ export function clearFrontendMappingsCache() {
   mappingsFetched = false;
 }
 
-function toConsonants(str: string): string {
-  let s = str.toLowerCase();
-  if (s.startsWith("wl")) {
-    s = s.substring(2);
-  }
-  s = s.replace(/2/g, "d");
-  return s.replace(/[^a-z]/g, "").replace(/[aeiou]/g, "");
-}
-
-function isSubsequence(sub: string, main: string): boolean {
-  let subIdx = 0;
-  for (let mainIdx = 0; mainIdx < main.length && subIdx < sub.length; mainIdx++) {
-    if (sub[subIdx] === main[mainIdx]) {
-      subIdx++;
-    }
-  }
-  return subIdx === sub.length;
-}
-
-export function isMatchingOffice(officeName: string, locationCode: string): boolean {
+export function isMatchingOffice(
+  officeName: string,
+  locationCode: string,
+): boolean {
   const officeClean = officeName.trim().toLowerCase();
   const codeClean = locationCode.trim().toLowerCase();
-  
   if (officeClean === codeClean) return true;
-  
+
   if (!mappingsFetched) {
     mappingsFetched = true; // prevent parallel fetches
     fetchAndCacheMappings().catch(() => {});
@@ -172,16 +161,8 @@ export function isMatchingOffice(officeName: string, locationCode: string): bool
     );
     if (match) return true;
   }
-  
-  const baseCode = codeClean.split("_")[0];
-  if (officeClean.includes(baseCode) || baseCode.includes(officeClean)) return true;
-  
-  const officeConsonants = toConsonants(officeName);
-  const codeConsonants = toConsonants(baseCode);
-  
-  if (!officeConsonants || !codeConsonants) return false;
-  
-  return isSubsequence(codeConsonants, officeConsonants) || isSubsequence(officeConsonants, codeConsonants);
+
+  return false;
 }
 
 export function locationExists(
@@ -209,7 +190,7 @@ export function resolveInitialPickedOffice(input: {
   locations: LocationItem[];
   fallback?: string;
 }): string {
-  const fallback = input.fallback ?? "Semua";
+  const fallback = input.fallback || "Semua";
   const candidates = [input.userOffice, input.savedOffice]
     .map((value) => value?.trim())
     .filter(Boolean) as string[];
@@ -217,11 +198,15 @@ export function resolveInitialPickedOffice(input: {
   if (input.locations.length === 0) {
     return candidates[0] ?? fallback;
   }
-
   for (const candidate of candidates) {
-    const match = input.locations.find((loc) => isMatchingOffice(candidate, loc.name));
-    if (match) return match.name;
+    const match = input.locations.find((loc) =>
+      isMatchingOffice(candidate, loc.name),
+    );
+    if (match) {
+      console.log("match", match);
+      return match.name;
+    }
   }
-
+  
   return fallback;
 }

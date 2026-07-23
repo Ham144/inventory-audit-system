@@ -1,0 +1,12 @@
+revisi:
+[x] fix: filtering location di admin belum match dengan office
+[x] mod: page admin masih terbuka ke operator
+[x] fix: tombol "terapkan" kadang tidak berfungsi
+[x] fix: fitur mylogs filter nya belum sempurna
+[x] mod: bulk compare dan print csv di bedain saja 
+[x] mod: kalau sudah match dengan nav, tidak bisa di compare lagi
+[x] mod: bisa input negative di page input oleh operator untuk menyesuaikan input secara mandiri saat menyadari kesalahan hitung fisik
+[x] fix: my logs: page selisih operator ke nav di sku tanpa qty selisih di hide
+[x] mod: visibilitas page sudah diperbaiki (admin gudang (semua halaman kecuali settings), operator (halaman my logs, input, cek selisih ))
+[x] add: judul aplikasi diganti dari "Input Hasil Scan" jadi "input stok"
+[] admin ga boleh input 

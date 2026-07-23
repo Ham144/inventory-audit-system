@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, redirect } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   Settings,
   ArrowLeft,
@@ -31,6 +31,7 @@ import {
   listAppUsers,
   syncAppUser,
   updateAppUserRole,
+  updateAppUserOffice,
 } from "~/api/opnameUserApi";
 import locationApi from "~/api/LocationApi";
 import {
@@ -52,6 +53,7 @@ import {
   normalizeLocationList,
   resolveInitialPickedOffice,
   clearFrontendMappingsCache,
+  fetchAndCacheMappings,
   type LocationItem,
 } from "~/libs/location";
 
@@ -73,6 +75,7 @@ function roleBadgeClass(role: AppRole | null) {
 }
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const { userInfo, setUserInfo } = useUserInfo();
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<AppTheme>(() => getAppTheme());
@@ -82,7 +85,7 @@ export default function SettingsPage() {
     message: string;
     type: "success" | "warning";
   } | null>(null);
-  
+
   const [mappings, setMappings] = useState<OfficeMappingRecord[]>([]);
   const [isLoadingMappings, setIsLoadingMappings] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -126,26 +129,54 @@ export default function SettingsPage() {
   });
 
   const roleMutation = useMutation({
-    mutationFn: ({ username, role }: { username: string; role: AppRole }) =>
-      updateAppUserRole(username, role),
+    mutationFn: async ({
+      username,
+      role,
+    }: {
+      username: string;
+      role: AppRole;
+    }) => await updateAppUserRole(username, role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["app-users"] });
       setToast({ message: "Role berhasil diperbarui", type: "success" });
     },
-    onError: () => {
-      setToast({ message: "Gagal memperbarui role", type: "warning" });
+    onError: (e: any) => {
+      setToast({
+        message: e?.response?.data?.message || "Gagal memperbarui role",
+        type: "warning",
+      });
+    },
+  });
+
+  const officeMutation = useMutation({
+    mutationFn: async ({
+      username,
+      office,
+    }: {
+      username: string;
+      office: string | null;
+    }) => await updateAppUserOffice(username, office),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["app-users"] });
+      setToast({ message: "Office user berhasil diperbarui", type: "success" });
+    },
+    onError: (e: any) => {
+      setToast({
+        message: e?.response?.data?.message || "Gagal memperbarui office user",
+        type: "warning",
+      });
     },
   });
 
   useEffect(() => {
-    if (!userInfo?.username) {
-      redirect("/login");
+    if (userInfo === null) {
+      navigate("/login", { replace: true });
       return;
     }
-    if (!canAccessAdmin(userInfo)) {
-      redirect("/input");
+    if (userInfo && !isOwner(userInfo)) {
+      navigate("/input", { replace: true });
     }
-  }, [userInfo]);
+  }, [userInfo, navigate]);
 
   useEffect(() => {
     if (!toast) return;
@@ -158,17 +189,19 @@ export default function SettingsPage() {
 
     const fetchLocations = async () => {
       try {
+        await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
         const list = normalizeLocationList(res);
         setLocations(list);
-        setAdminOffice((prev) =>
-          prev ||
-          resolveInitialPickedOffice({
-            userOffice: userOffice(userInfo),
-            savedOffice: prev,
-            locations: list,
-            fallback: "",
-          }),
+        setAdminOffice(
+          (prev) =>
+            prev ||
+            resolveInitialPickedOffice({
+              userOffice: userOffice(userInfo),
+              savedOffice: prev,
+              locations: list,
+              fallback: "",
+            }),
         );
       } catch {
         setLocations([]);
@@ -202,14 +235,18 @@ export default function SettingsPage() {
         officeName: formOfficeName.trim(),
         locationCode: formLocationCode.trim().toUpperCase(),
       });
-      setToast({ message: "Pemetaan lokasi berhasil ditambahkan", type: "success" });
+      setToast({
+        message: "Pemetaan lokasi berhasil ditambahkan",
+        type: "success",
+      });
       setFormOfficeName("");
       setFormLocationCode("");
       setIsAdding(false);
       clearFrontendMappingsCache();
       fetchMappings();
     } catch (err: any) {
-      const errorMsg = err.response?.data?.error || "Gagal menambahkan pemetaan";
+      const errorMsg =
+        err.response?.data?.error || "Gagal menambahkan pemetaan";
       setToast({ message: errorMsg, type: "warning" });
     }
   };
@@ -221,14 +258,18 @@ export default function SettingsPage() {
         officeName: formOfficeName.trim(),
         locationCode: formLocationCode.trim().toUpperCase(),
       });
-      setToast({ message: "Pemetaan lokasi berhasil diperbarui", type: "success" });
+      setToast({
+        message: "Pemetaan lokasi berhasil diperbarui",
+        type: "success",
+      });
       setEditingId(null);
       setFormOfficeName("");
       setFormLocationCode("");
       clearFrontendMappingsCache();
       fetchMappings();
     } catch (err: any) {
-      const errorMsg = err.response?.data?.error || "Gagal memperbarui pemetaan";
+      const errorMsg =
+        err.response?.data?.error || "Gagal memperbarui pemetaan";
       setToast({ message: errorMsg, type: "warning" });
     }
   };
@@ -237,7 +278,10 @@ export default function SettingsPage() {
     if (!confirm("Apakah Anda yakin ingin menghapus pemetaan ini?")) return;
     try {
       await deleteOfficeMapping(id);
-      setToast({ message: "Pemetaan lokasi berhasil dihapus", type: "success" });
+      setToast({
+        message: "Pemetaan lokasi berhasil dihapus",
+        type: "success",
+      });
       clearFrontendMappingsCache();
       fetchMappings();
     } catch (err) {
@@ -268,8 +312,15 @@ export default function SettingsPage() {
     setToast({ message: "Default office admin disimpan", type: "success" });
   };
 
-  const displayOffice =
-    profileQuery.data?.office ?? userInfo?.office ?? "—";
+  const displayOffice = profileQuery.data?.office ?? userInfo?.office ?? "—";
+
+  if (userInfo === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <span className="loading loading-spinner loading-lg text-indigo-500" />
+      </div>
+    );
+  }
 
   return (
     <DocsShell title="Pengaturan" subtitle="Settings" showDocSidebar={false}>
@@ -288,7 +339,9 @@ export default function SettingsPage() {
           </div>
           <div>
             <h1 className="text-xl font-black text-slate-900">Pengaturan</h1>
-            <p className="text-sm text-slate-500">{userSessionLabel(userInfo)}</p>
+            <p className="text-sm text-slate-500">
+              {userSessionLabel(userInfo)}
+            </p>
           </div>
         </div>
 
@@ -312,7 +365,9 @@ export default function SettingsPage() {
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                 Role
               </p>
-              <span className={`badge badge-sm font-bold ${roleBadgeClass(currentRole)}`}>
+              <span
+                className={`badge badge-sm font-bold ${roleBadgeClass(currentRole)}`}
+              >
                 {currentRole ? ROLE_LABELS[currentRole] : "Belum diset"}
               </span>
             </div>
@@ -365,29 +420,6 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-
-          {showOwnerSection && (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-                Default Office Admin
-              </p>
-              <select
-                className="select select-bordered select-sm w-full max-w-xs bg-slate-50 font-semibold"
-                value={adminOffice}
-                onChange={(e) => handleAdminOfficeChange(e.target.value)}
-              >
-                <option value="">— Tidak ada default —</option>
-                {locations.map((loc) => (
-                  <option key={loc._id ?? loc.name} value={loc.name}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-400 mt-1.5">
-                Dipakai saat membuka halaman admin sebagai owner.
-              </p>
-            </div>
-          )}
         </section>
 
         {/* Pemetaan Lokasi (CRUD) */}
@@ -395,7 +427,9 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MapPin className="h-4 w-4 text-indigo-500" />
-              <h2 className="font-bold text-slate-900">Pemetaan Lokasi (Office & ERP Code)</h2>
+              <h2 className="font-bold text-slate-900">
+                Pemetaan Lokasi (Office & ERP Code)
+              </h2>
             </div>
             {!isAdding && !editingId && (
               <button
@@ -410,17 +444,32 @@ export default function SettingsPage() {
           </div>
 
           <p className="text-xs text-slate-500">
-            Digunakan untuk mencocokkan Nama Office pengguna (misal: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">WL Pluit</code>) dengan Kode Lokasi yang berasal dari ERP (misal: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">PLUIT_JUAL</code>).
+            Digunakan untuk mencocokkan Nama Office pengguna (misal:{" "}
+            <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">
+              WL Pluit
+            </code>
+            ) dengan Kode Lokasi yang berasal dari ERP (misal:{" "}
+            <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">
+              PLUIT_JUAL
+            </code>
+            ).
           </p>
 
           {/* Form Tambah */}
           {isAdding && (
-            <form onSubmit={handleAddMapping} className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-              <h3 className="text-xs font-bold text-slate-700">Tambah Mapping Baru</h3>
+            <form
+              onSubmit={handleAddMapping}
+              className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3"
+            >
+              <h3 className="text-xs font-bold text-slate-700">
+                Tambah Mapping Baru
+              </h3>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="label py-0.5">
-                    <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-400">Nama Office (Internal)</span>
+                    <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Nama Office (Internal)
+                    </span>
                   </label>
                   <input
                     type="text"
@@ -433,12 +482,14 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <label className="label py-0.5">
-                    <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-400">Kode Lokasi (ERP)</span>
+                    <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Kode Lokasi (ERP)
+                    </span>
                   </label>
                   <input
                     type="text"
                     placeholder="Contoh: PLUIT_JUAL"
-                    className="input input-bordered input-sm w-full bg-white font-medium"
+                    className="input-bordered input-sm w-full bg-white font-medium"
                     value={formLocationCode}
                     onChange={(e) => setFormLocationCode(e.target.value)}
                     required
@@ -469,7 +520,9 @@ export default function SettingsPage() {
               <span className="loading loading-spinner loading-md text-indigo-500" />
             </div>
           ) : mappings.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center py-4">Belum ada pemetaan lokasi yang terdaftar.</p>
+            <p className="text-xs text-slate-400 text-center py-4">
+              Belum ada pemetaan lokasi yang terdaftar.
+            </p>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-slate-100">
               <table className="table table-sm">
@@ -491,7 +544,9 @@ export default function SettingsPage() {
                               type="text"
                               className="input input-bordered input-xs w-full max-w-xs font-semibold"
                               value={formOfficeName}
-                              onChange={(e) => setFormOfficeName(e.target.value)}
+                              onChange={(e) =>
+                                setFormOfficeName(e.target.value)
+                              }
                             />
                           ) : (
                             row.officeName
@@ -501,9 +556,11 @@ export default function SettingsPage() {
                           {isEditing ? (
                             <input
                               type="text"
-                              className="input input-bordered input-xs w-full max-w-xs font-semibold"
+                              className="input input-bordered input-xs w-full max-w-xs font-semibold bg-white"
                               value={formLocationCode}
-                              onChange={(e) => setFormLocationCode(e.target.value)}
+                              onChange={(e) =>
+                                setFormLocationCode(e.target.value)
+                              }
                             />
                           ) : (
                             row.locationCode
@@ -579,8 +636,10 @@ export default function SettingsPage() {
                   <thead>
                     <tr className="text-slate-500">
                       <th>Username</th>
-                      <th>Office</th>
-                      <th>Role</th>
+                      <th>role</th>
+                      <th>description</th>
+                      <th>office</th>
+                      <th>actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -589,18 +648,20 @@ export default function SettingsPage() {
                       return (
                         <tr key={row.username}>
                           <td className="font-semibold">{row.username}</td>
-                          <td className="text-slate-600">
-                            {row.office ?? "—"}
-                          </td>
                           <td>
-                            {isSelf ? (
+                            {isSelf && row.role != "owner" ? (
                               <span className="text-xs text-slate-400">
-                                {ROLE_LABELS[userRole({ role: row.role ?? undefined }) ?? "operator"]}{" "}
+                                {
+                                  ROLE_LABELS[
+                                    userRole({ role: row.role ?? undefined }) ??
+                                      "operator"
+                                  ]
+                                }{" "}
                                 (tidak bisa ubah sendiri)
                               </span>
                             ) : (
                               <select
-                                className="select select-bordered select-xs font-semibold"
+                                className="select select-bordered select-xs font-semibold bg-white"
                                 value={(row.role ?? "operator").toLowerCase()}
                                 disabled={roleMutation.isPending}
                                 onChange={(e) =>
@@ -615,6 +676,37 @@ export default function SettingsPage() {
                                 <option value="owner">Owner</option>
                               </select>
                             )}
+                          </td>
+                          <td>{row.description ?? "-"}</td>
+                          <td>
+                            <select
+                              className="select select-bordered select-xs font-semibold bg-white max-w-45"
+                              value={row.office ?? ""}
+                              disabled={officeMutation.isPending}
+                              onChange={(e) =>
+                                officeMutation.mutate({
+                                  username: row.username,
+                                  office: e.target.value || null,
+                                })
+                              }
+                            >
+                              <option value="">-- Pilih Office --</option>
+                              {locations.map((loc) => (
+                                <option key={loc.name} value={loc.name}>
+                                  {loc.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <div className="grid gap-y-1">
+                              <button className="btn btn-xs btn-warning">
+                                Disable
+                              </button>
+                              <button className="btn btn-xs btn-info">
+                                Edit
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

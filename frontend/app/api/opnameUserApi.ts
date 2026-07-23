@@ -5,6 +5,7 @@ export type AppUserRecord = {
   username: string;
   role: string | null;
   office: string | null;
+  description?: string;
 };
 
 export async function syncAppUser(payload: {
@@ -24,7 +25,8 @@ export async function getAppUser() {
 }
 
 export async function listAppUsers() {
-  const response = await axiosInstance.get<AppUserRecord[]>("/api/opname/users");
+  const response =
+    await axiosInstance.get<AppUserRecord[]>("/api/opname/users");
   return response.data;
 }
 
@@ -32,6 +34,14 @@ export async function updateAppUserRole(username: string, role: AppRole) {
   const response = await axiosInstance.patch<AppUserRecord>(
     `/api/opname/users/${encodeURIComponent(username)}/role`,
     { role },
+  );
+  return response.data;
+}
+
+export async function updateAppUserOffice(username: string, office: string | null) {
+  const response = await axiosInstance.patch<AppUserRecord>(
+    `/api/opname/users/${encodeURIComponent(username)}/office`,
+    { office },
   );
   return response.data;
 }

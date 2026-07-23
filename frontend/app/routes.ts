@@ -7,4 +7,5 @@ export default [
   route("settings", "routes/settings.tsx"),
   route("my-logs", "routes/my-logs.tsx"),
   route("login", "routes/login.tsx"),
+  route("selisih", "routes/selisih.tsx"),
 ] satisfies RouteConfig;

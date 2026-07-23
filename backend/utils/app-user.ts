@@ -52,6 +52,9 @@ export function canScan(
   user: AppUser | null | undefined,
   requestedOffice?: string,
 ): boolean {
+  if (isAdmin(user)) {
+    return false;
+  }
   if (isOwner(user)) {
     return Boolean(user?.office?.trim() || requestedOffice?.trim());
   }
@@ -61,24 +64,30 @@ export function canScan(
 export async function resolveAppUser(req: {
   user?: JwtPayload;
 }): Promise<AppUser | null> {
+  console.log("DEBUG resolveAppUser: req.user =", req.user);
   const username = readUsername(req.user);
+  console.log("DEBUG resolveAppUser: username =", username);
   if (!username) return null;
 
   const dbUser = await findUserByUsername(username);
-
+  console.log("DEBUG resolveAppUser: dbUser =", dbUser);
   if (dbUser) {
-    return {
+    const res = {
       username: dbUser.username,
       role: dbUser.role ?? "operator",
       office: dbUser.office,
     };
+    console.log("DEBUG resolveAppUser: returning dbUser mapping =", res);
+    return res;
   }
 
-  return {
+  const res = {
     username,
     role: null,
     office: readOfficeFromJwt(req.user),
   };
+  console.log("DEBUG resolveAppUser: returning JWT fallback =", res);
+  return res;
 }
 
 export function resolveOfficeFilter(
@@ -107,25 +116,23 @@ export function assertScanAccess(
     return { ok: false, status: 401, message: "User tidak ditemukan" };
   }
 
-  if (isOwner(user)) {
-    const office = user.office?.trim() || requestedOffice?.trim();
-    if (!office) {
-      return {
-        ok: false,
-        status: 403,
-        message: "Pilih wilayah/lokasi terlebih dahulu.",
-      };
-    }
-    return { ok: true, office: mapLocationToOffice(office) };
-  }
-
-  const office = user.office?.trim();
-  if (!office) {
+  if (isAdmin(user)) {
     return {
       ok: false,
       status: 403,
-      message: "Akun tidak memiliki office. Scan tidak diizinkan.",
+      message: "Admin tidak diperbolehkan melakukan scan input fisik.",
     };
   }
-  return { ok: true, office: mapLocationToOffice(office) };
+
+  const rawOffice = requestedOffice?.trim() || user.office?.trim();
+  if (!rawOffice) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+    };
+  }
+
+  // Return rawOffice as-is; async mapping is handled by the caller (route)
+  return { ok: true, office: rawOffice };
 }

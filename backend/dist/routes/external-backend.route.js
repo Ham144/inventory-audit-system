@@ -122,6 +122,7 @@ router.all(/.*/, async (req, res) => {
             headers: buildForwardHeaders(req, hasJsonBody),
             data: hasJsonBody ? forwardBody : undefined,
             validateStatus: () => true,
+            proxy: false,
         });
         if (shouldFilterProductList(path)) {
             response.data = filterProductListPayload(response.data);
@@ -167,10 +168,12 @@ router.all(/.*/, async (req, res) => {
     }
     catch (error) {
         const axiosError = error;
+        console.log(error);
         console.error("SO proxy error:", axiosError?.message);
-        return res
-            .status(500)
-            .json({ message: "Gagal terhubung ke Backend Source of Truth (midcsi)" });
+        return res.status(500).json({
+            message: error?.response?.data?.message ||
+                "Gagal terhubung ke Backend Source of Truth (midcsi)",
+        });
     }
 });
 export default router;

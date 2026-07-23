@@ -2,11 +2,14 @@ import express from "express";
 import "dotenv/config";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import axios from "axios";
 import externalBackendRouter from "./routes/external-backend.route.js";
 import opnameRouter, { startOpnameCron } from "./routes/opname.route.js";
 import compareRouter from "./routes/compare.router.js";
 import mappingRouter from "./routes/mapping.route.js";
 import authenticate from "./middlewares/authenticate.middleware.js";
+
+axios.defaults.proxy = false;
 
 import { connectDB } from "./config/db.js";
 

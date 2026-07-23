@@ -14,13 +14,13 @@ export interface UserInfo {
 }
 
 interface UserState {
-  userInfo: UserInfo | null;
+  userInfo: UserInfo | null | undefined;
   setUserInfo: (userInfo: UserInfo | null) => void;
   clearUserInfo: () => void;
 }
 
 export const useUserInfo = create<UserState>((set) => ({
-  userInfo: null,
+  userInfo: undefined,
   setUserInfo: (userInfo) => set(() => ({ userInfo })),
   clearUserInfo: () => set(() => ({ userInfo: null })),
 }));
