@@ -158,18 +158,30 @@ export default function Login() {
               <Building className="h-3.5 w-3.5" />
               LDAP Login
             </button>
+            <button
+              type="button"
+              onClick={() => setLoginType("app")}
+              className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
+                loginType === "app"
+                  ? "bg-white text-indigo-650 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              App Account
+            </button>
           </div>
 
           {/* Username Input */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-              Username LDAP / Email
+              {loginType === "ldap" ? "Username LDAP / Email" : "Username App / Local Account"}
             </label>
             <div className="relative">
               <User className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-slate-400 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Masukkan username atau email..."
+                placeholder={loginType === "ldap" ? "Masukkan username atau email..." : "Masukkan username..."}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={isLoading}

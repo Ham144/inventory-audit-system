@@ -15,6 +15,9 @@ import {
   Edit2,
   Save,
   X,
+  UserPlus,
+  KeyRound,
+  Lock,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocsShell } from "~/components/DocsShell";
@@ -26,12 +29,15 @@ import {
   type OfficeMappingRecord,
 } from "~/api/officeMappingApi";
 import { useUserInfo } from "~/store";
+import { createAppUser, resetPassword, deleteAppUser } from "~/api/authApi";
 import {
   getAppUser,
   listAppUsers,
   syncAppUser,
   updateAppUserRole,
   updateAppUserOffice,
+  deleteAppUserFromOpname,
+  syncNonAdAppUser,
 } from "~/api/opnameUserApi";
 import locationApi from "~/api/LocationApi";
 import {
@@ -92,6 +98,97 @@ export default function SettingsPage() {
   const [formOfficeName, setFormOfficeName] = useState("");
   const [formLocationCode, setFormLocationCode] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<AppRole>("operator");
+  const [newOffice, setNewOffice] = useState("");
+
+  const [resetPasswordUser, setResetPasswordUser] = useState<string | null>(
+    null,
+  );
+  const [resetPasswordValue, setResetPasswordValue] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  const handleCreateNonAdUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim() || !newPassword.trim()) {
+      setToast({
+        message: "Username dan Password wajib diisi",
+        type: "warning",
+      });
+      return;
+    }
+    setIsCreatingUser(true);
+    try {
+      await createAppUser({
+        username: newUsername.trim(),
+        password: newPassword.trim(),
+        role: newRole,
+        office: newOffice || undefined,
+      });
+
+      await syncNonAdAppUser({
+        username: newUsername.trim(),
+        role: newRole,
+        office: newOffice || null,
+      });
+
+      setToast({
+        message: `User Non-AD "${newUsername.trim()}" berhasil dibuat`,
+        type: "success",
+      });
+      setIsAddingUser(false);
+      setNewUsername("");
+      setNewPassword("");
+      setNewRole("operator");
+      setNewOffice("");
+      queryClient.invalidateQueries({ queryKey: ["app-users"] });
+    } catch (err: any) {
+      setToast({
+        message:
+          err?.response?.data?.message ||
+          err?.message ||
+          "Gagal membuat user Non-AD",
+        type: "warning",
+      });
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPasswordUser || !resetPasswordValue.trim()) {
+      setToast({ message: "Password baru wajib diisi", type: "warning" });
+      return;
+    }
+    setIsResettingPassword(true);
+    try {
+      await resetPassword({
+        username: resetPasswordUser,
+        newPassword: resetPasswordValue.trim(),
+      });
+      setToast({
+        message: `Password user "${resetPasswordUser}" berhasil diperbarui`,
+        type: "success",
+      });
+      setResetPasswordUser(null);
+      setResetPasswordValue("");
+    } catch (err: any) {
+      setToast({
+        message:
+          err?.response?.data?.message ||
+          err?.message ||
+          "Gagal mereset password",
+        type: "warning",
+      });
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
 
   const showOwnerSection = isOwner(userInfo);
   const currentRole = userRole(userInfo);
@@ -616,13 +713,143 @@ export default function SettingsPage() {
           )}
         </section>
 
-        {/* Manajemen Role */}
+        {/* Manajemen User (Non-AD & AD) */}
         {showOwnerSection && (
           <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <Shield className="h-4 w-4 text-indigo-500" />
-              <h2 className="font-bold text-slate-900">Manajemen Role</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-indigo-500" />
+                <h2 className="font-bold text-slate-900">
+                  Manajemen User (Non-AD & AD)
+                </h2>
+              </div>
+              {!isAddingUser && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingUser(true)}
+                  className="btn btn-xs btn-primary gap-1"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Tambah User Non-AD
+                </button>
+              )}
             </div>
+
+            <p className="text-xs text-slate-500">
+              Kelola role, lokasi office, reset password, dan pembuatan akun
+              Non-AD untuk staf operasional atau tim IT.
+            </p>
+
+            {/* Form Tambah User Non-AD */}
+            {isAddingUser && (
+              <form
+                onSubmit={handleCreateNonAdUser}
+                className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 space-y-3"
+              >
+                <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
+                  <UserPlus className="h-4 w-4 text-indigo-600" />
+                  <span>Tambah User Baru (Tanpa AD / Local App)</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="label py-0.5">
+                      <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Username *
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: op_pluit1"
+                      className="input input-bordered input-sm w-full bg-white font-medium"
+                      value={newUsername}
+                      onChange={(e) => setNewUsername(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="label py-0.5">
+                      <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Password *
+                      </span>
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      className="input input-bordered input-sm w-full bg-white font-medium"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="label py-0.5">
+                      <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Role Aplikasi *
+                      </span>
+                    </label>
+                    <select
+                      className="select select-bordered select-sm w-full bg-white font-semibold"
+                      value={newRole}
+                      onChange={(e) => setNewRole(e.target.value as AppRole)}
+                    >
+                      <option value="operator">Operator (Scan Fisik)</option>
+                      <option value="admin">Admin (Approval & Sync)</option>
+                      <option value="owner">Owner (IT / Full Control)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="label py-0.5">
+                      <span className="label-text text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Wilayah / Office Default
+                      </span>
+                    </label>
+                    <select
+                      className="select select-bordered select-sm w-full bg-white font-semibold"
+                      value={newOffice}
+                      onChange={(e) => setNewOffice(e.target.value)}
+                    >
+                      <option value="">-- Pilih Office (Opsional) --</option>
+                      {locations.map((loc) => (
+                        <option key={loc.name} value={loc.name}>
+                          {loc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingUser(false);
+                      setNewUsername("");
+                      setNewPassword("");
+                      setNewRole("operator");
+                      setNewOffice("");
+                    }}
+                    className="btn btn-xs btn-ghost"
+                    disabled={isCreatingUser}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-xs btn-primary gap-1"
+                    disabled={isCreatingUser}
+                  >
+                    {isCreatingUser && (
+                      <span className="loading loading-spinner loading-xs" />
+                    )}
+                    Simpan User Non-AD
+                  </button>
+                </div>
+              </form>
+            )}
 
             {usersQuery.isLoading ? (
               <div className="flex justify-center py-8">
@@ -636,18 +863,35 @@ export default function SettingsPage() {
                   <thead>
                     <tr className="text-slate-500">
                       <th>Username</th>
-                      <th>role</th>
-                      <th>description</th>
-                      <th>office</th>
-                      <th>actions</th>
+                      <th>Tipe</th>
+                      <th>Role</th>
+                      <th>Office</th>
+                      <th className="text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(usersQuery.data ?? []).map((row) => {
                       const isSelf = row.username === userInfo?.username;
+                      const isNonAd =
+                        row.type === "app" ||
+                        row.type === "non-ad" ||
+                        row.type === "local" ||
+                        row.authMethod === "app";
+
                       return (
                         <tr key={row.username}>
-                          <td className="font-semibold">{row.username}</td>
+                          <td className="font-semibold text-slate-800">
+                            {row.username}
+                          </td>
+                          <td>
+                            <span
+                              className={`badge badge-xs font-bold ${
+                                isNonAd ? "badge-info" : "badge-ghost"
+                              }`}
+                            >
+                              {isNonAd ? "Non-AD (App)" : "AD (LDAP)"}
+                            </span>
+                          </td>
                           <td>
                             {isSelf && row.role != "owner" ? (
                               <span className="text-xs text-slate-400">
@@ -656,8 +900,7 @@ export default function SettingsPage() {
                                     userRole({ role: row.role ?? undefined }) ??
                                       "operator"
                                   ]
-                                }{" "}
-                                (tidak bisa ubah sendiri)
+                                }
                               </span>
                             ) : (
                               <select
@@ -677,7 +920,6 @@ export default function SettingsPage() {
                               </select>
                             )}
                           </td>
-                          <td>{row.description ?? "-"}</td>
                           <td>
                             <select
                               className="select select-bordered select-xs font-semibold bg-white max-w-45"
@@ -698,15 +940,24 @@ export default function SettingsPage() {
                               ))}
                             </select>
                           </td>
-                          <td>
-                            <div className="grid gap-y-1">
-                              <button className="btn btn-xs btn-warning">
-                                Disable
-                              </button>
-                              <button className="btn btn-xs btn-info">
-                                Edit
-                              </button>
-                            </div>
+                          <td className="text-right">
+                            <div className="flex justify-end gap-1">
+                              {(row.type === "app" || row.authMethod === "app") && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setResetPasswordUser(row.username)
+                                  }
+                                  className="btn btn-xs btn-ghost text-slate-600 hover:text-indigo-600 gap-1"
+                                  title="Reset Password"
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                  <span className="hidden sm:inline">
+                                    Reset
+                                  </span>
+                                </button>
+                              )}
+                             </div>
                           </td>
                         </tr>
                       );
@@ -716,6 +967,82 @@ export default function SettingsPage() {
               </div>
             )}
           </section>
+        )}
+
+        {/* Modal Reset Password */}
+        {resetPasswordUser && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                    <KeyRound className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900">
+                      Reset Password User
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Target:{" "}
+                      <span className="font-semibold text-indigo-600">
+                        {resetPasswordUser}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetPasswordUser(null);
+                    setResetPasswordValue("");
+                  }}
+                  className="btn btn-xs btn-ghost btn-circle text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                    Password Baru *
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Masukkan password baru..."
+                    className="input input-bordered input-sm w-full bg-slate-50 font-medium focus:bg-white"
+                    value={resetPasswordValue}
+                    onChange={(e) => setResetPasswordValue(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetPasswordUser(null);
+                      setResetPasswordValue("");
+                    }}
+                    className="btn btn-sm btn-ghost"
+                    disabled={isResettingPassword}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-sm btn-primary gap-1"
+                    disabled={isResettingPassword}
+                  >
+                    {isResettingPassword && (
+                      <span className="loading loading-spinner loading-xs" />
+                    )}
+                    Simpan Password Baru
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
       </div>
 

@@ -66,11 +66,13 @@ export function parseAuthProfile(payload: unknown): AuthProfile | null {
 
   if (!username) return null;
 
-  const office =
+  const rawOffice =
     readFieldCI(root, "office", "location", "locationCode", "wilayah") ??
     readFieldCI(data, "office", "location", "locationCode", "wilayah") ??
     readFieldCI(userInfo, "office", "location", "locationCode", "wilayah") ??
     null;
+
+  const office = isItDepartment(rawOffice) ? null : rawOffice;
 
   const description =
     readFieldCI(root, "description", "department", "division", "jobTitle") ??

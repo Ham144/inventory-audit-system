@@ -1,9 +1,9 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapOfficeToLocation, mapLocationToOfficeAsync } from "../utils/office-mapping.js";
+import { mapOfficeToLocation, mapLocationToOfficeAsync, } from "../utils/office-mapping.js";
 import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, validateDateRange, } from "../utils/compare-filters.js";
-import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, } from "../utils/scan-approval.js";
+import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, clearStaleSystemApproval, } from "../utils/scan-approval.js";
 import { resolveStockQty } from "../types/catalog.js";
 import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
 const databaseCenter = () => process.env.DATABASE_CENTER;
@@ -63,8 +63,10 @@ async function fetchNavStockQty(sku, office, req) {
 }
 async function buildNavRow(item, rakStats, physicalQtyOverride) {
     const office = readOffice(item.session ?? {});
-    const physicalQty = physicalQtyOverride ??
-        (await sumApprovedQtyForSkuLocation(item.sessionId, item.sku, office));
+    const physicalQty = item.finalCorrectionQty !== null && item.finalCorrectionQty !== undefined
+        ? item.finalCorrectionQty
+        : (physicalQtyOverride ??
+            (await sumApprovedQtyForSkuLocation(item.sessionId, item.sku, office)));
     const stats = rakStats ??
         (await countRakStatsForSkuLocation(item.sessionId, item.sku, office));
     return {
@@ -80,6 +82,15 @@ async function buildNavRow(item, rakStats, physicalQtyOverride) {
         pendingRakCount: stats.pendingRakCount,
         sessionId: item.sessionId,
         note: item.note ?? null,
+        finalCorrectionQty: item.finalCorrectionQty ?? null,
+        finalCorrectionBy: item.finalCorrectionBy ?? null,
+        finalCorrectionAt: item.finalCorrectionAt
+            ? item.finalCorrectionAt.toISOString()
+            : null,
+        finalCorrectionRak: item.finalCorrectionRak ?? null,
+        delegatedTo: item.delegatedTo ?? null,
+        delegatedBy: item.delegatedBy ?? null,
+        delegatedAt: item.delegatedAt ? item.delegatedAt.toISOString() : null,
     };
 }
 async function reconcileStaleApprovals(whereClause) {
@@ -100,7 +111,7 @@ async function reconcileStaleApprovals(whereClause) {
         if (!groupHasOperatorQtyConflict(toScanGroups(groupScans)))
             continue;
         const first = toScanGroups(groupScans)[0];
-        await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
+        await clearStaleSystemApproval(first.sessionId, first.sku, first.rak, first.office);
     }
 }
 async function buildScanCompareRows(whereClause) {
@@ -135,8 +146,8 @@ async function buildScanCompareRows(whereClause) {
         const key = approvalGroupKey(first.sessionId, first.sku, first.rak, first.office);
         const match = !groupHasOperatorQtyConflict(normalized);
         let approval = approvalByKey.get(key);
-        if (!match && approval) {
-            await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
+        if (!match && approval && approval.approvedBy === "system") {
+            await clearStaleSystemApproval(first.sessionId, first.sku, first.rak, first.office);
             approval = undefined;
         }
         if (match && !approval) {
@@ -182,17 +193,12 @@ async function buildNavCompareRows(whereClause) {
                 sku: true,
                 office: true,
                 rak: true,
-                approval: {
-                    select: {
-                        id: true,
-                    },
-                },
             },
         }),
     ]);
     const physicalQtyByKey = new Map();
     const raksWithScansByKey = new Map();
-    const raksWithPendingScansByKey = new Map();
+    const resolvedRaksByKey = new Map();
     for (const scan of scans) {
         const office = readOffice(scan);
         const key = navAggregateKey(scan.sessionId, scan.sku, office);
@@ -200,23 +206,22 @@ async function buildNavCompareRows(whereClause) {
             raksWithScansByKey.set(key, new Set());
         }
         raksWithScansByKey.get(key).add(scan.rak);
-        if (!scan.approval) {
-            if (!raksWithPendingScansByKey.has(key)) {
-                raksWithPendingScansByKey.set(key, new Set());
-            }
-            raksWithPendingScansByKey.get(key).add(scan.rak);
-        }
     }
     for (const approval of approvals) {
         const key = navAggregateKey(approval.sessionId, approval.sku, approval.office);
         physicalQtyByKey.set(key, (physicalQtyByKey.get(key) ?? 0) + approval.approvedQty);
+        if (!resolvedRaksByKey.has(key)) {
+            resolvedRaksByKey.set(key, new Set());
+        }
+        resolvedRaksByKey.get(key).add(approval.rak);
     }
     return Promise.all(items.map((item) => {
         const office = readOffice(item.session);
         const key = navAggregateKey(item.sessionId, item.sku, office);
-        const raksWithScans = raksWithScansByKey.get(key)?.size ?? 0;
-        const pendingRakCount = raksWithPendingScansByKey.get(key)?.size ?? 0;
-        const resolvedRakCount = Math.max(0, raksWithScans - pendingRakCount);
+        const allRaks = raksWithScansByKey.get(key) ?? new Set();
+        const resolvedRaks = resolvedRaksByKey.get(key) ?? new Set();
+        const resolvedRakCount = resolvedRaks.size;
+        const pendingRakCount = Math.max(0, allRaks.size - resolvedRakCount);
         const physicalQty = physicalQtyByKey.get(key) ?? 0;
         return buildNavRow(item, { resolvedRakCount, pendingRakCount }, physicalQty);
     }));
@@ -262,7 +267,9 @@ router.get("/scan", async (req, res) => {
         const filters = await scopedCompareFilters(req);
         const whereClause = await sessionScopeWhere(filters.office);
         const rows = await buildScanCompareRows(whereClause);
-        return res.json(filterScanCompareRows(rows, filters));
+        const filtered = filterScanCompareRows(rows, filters);
+        console.log(`[DEBUG SCANS] Returning ${filtered.length} scans for office=${filters.office}, rak=${filters.rak}, search=${filters.search}`);
+        return res.json(filtered);
     }
     catch (error) {
         return res.status(500).json({ error: errorMessage(error) });
@@ -352,10 +359,10 @@ router.patch("/scan/:scanLogId", async (req, res) => {
         }
         const { qty } = req.body;
         const qtyNum = Number(qty);
-        if (!Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isInteger(qtyNum)) {
+        if (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum)) {
             return res
                 .status(400)
-                .json({ error: "qty harus bilangan bulat positif" });
+                .json({ error: "qty harus bilangan bulat non-negatif" });
         }
         const updated = await prisma.scanLog.update({
             where: { id: scanLogId },
@@ -492,6 +499,136 @@ router.patch("/nav/:compareItemId/note", async (req, res) => {
         const updated = await prisma.compareItem.update({
             where: { id: item.id },
             data: { note: trimmed || null },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        const row = await buildNavRow(updated);
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
+// Final Correction: admin directly sets the physicalQty, bypassing rak-level approval logic
+router.post("/nav/:compareItemId/final-correction", async (req, res) => {
+    try {
+        const appUser = await resolveAppUser(req);
+        if (!canAccessAdmin(appUser)) {
+            return res.status(403).json({
+                error: "Hanya admin atau owner yang dapat melakukan koreksi akhir",
+            });
+        }
+        const compareItemId = String(req.params.compareItemId);
+        const { physicalQty, rak } = req.body;
+        const qtyNum = Number(physicalQty);
+        if (!Number.isFinite(qtyNum) || qtyNum < 0 || !Number.isInteger(qtyNum)) {
+            return res
+                .status(400)
+                .json({ error: "physicalQty harus bilangan bulat non-negatif" });
+        }
+        const item = await prisma.compareItem.findUnique({
+            where: { id: compareItemId },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        if (!item) {
+            return res.status(404).json({ error: "Compare item tidak ditemukan" });
+        }
+        const approver = resolveApprover(req);
+        const now = new Date();
+        // Determine status based on systemQty comparison
+        const status = item.status === "BELUM_COMPARE"
+            ? "BELUM_COMPARE"
+            : qtyNum === item.systemQty
+                ? "SESUAI"
+                : "SELISIH";
+        const updated = await prisma.compareItem.update({
+            where: { id: item.id },
+            data: {
+                physicalQty: qtyNum,
+                finalCorrectionQty: qtyNum,
+                finalCorrectionBy: approver,
+                finalCorrectionAt: now,
+                finalCorrectionRak: rak !== undefined && rak !== null ? Number(rak) : null,
+                status,
+                updatedAt: now,
+            },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        const row = await buildNavRow(updated);
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
+router.delete("/nav/:compareItemId/final-correction", async (req, res) => {
+    try {
+        const appUser = await resolveAppUser(req);
+        if (!canAccessAdmin(appUser)) {
+            return res.status(403).json({
+                error: "Hanya admin atau owner yang dapat membatalkan koreksi akhir",
+            });
+        }
+        const compareItemId = String(req.params.compareItemId);
+        const item = await prisma.compareItem.findUnique({
+            where: { id: compareItemId },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        if (!item) {
+            return res.status(404).json({ error: "Compare item tidak ditemukan" });
+        }
+        const office = readOffice(item.session);
+        const originalPhysicalQty = await sumApprovedQtyForSkuLocation(item.sessionId, item.sku, office);
+        const status = item.status === "BELUM_COMPARE"
+            ? "BELUM_COMPARE"
+            : originalPhysicalQty === item.systemQty
+                ? "SESUAI"
+                : "SELISIH";
+        const updated = await prisma.compareItem.update({
+            where: { id: item.id },
+            data: {
+                physicalQty: originalPhysicalQty,
+                finalCorrectionQty: null,
+                finalCorrectionBy: null,
+                finalCorrectionAt: null,
+                finalCorrectionRak: null,
+                status,
+                updatedAt: new Date(),
+            },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        const row = await buildNavRow(updated);
+        return res.json(row);
+    }
+    catch (error) {
+        return res.status(500).json({ error: errorMessage(error) });
+    }
+});
+// Delegation: admin assigns a user to re-check a specific SKU on the selisih page
+router.patch("/nav/:compareItemId/delegate", async (req, res) => {
+    try {
+        const appUser = await resolveAppUser(req);
+        if (!canAccessAdmin(appUser)) {
+            return res.status(403).json({
+                error: "Hanya admin atau owner yang dapat mendelegasikan pengecekan",
+            });
+        }
+        const compareItemId = String(req.params.compareItemId);
+        const { delegatedTo } = req.body;
+        const item = await prisma.compareItem.findUnique({
+            where: { id: compareItemId },
+            include: { session: { select: SESSION_OFFICE_SELECT } },
+        });
+        if (!item) {
+            return res.status(404).json({ error: "Compare item tidak ditemukan" });
+        }
+        const approver = resolveApprover(req);
+        const updated = await prisma.compareItem.update({
+            where: { id: item.id },
+            data: {
+                delegatedTo: delegatedTo?.trim() || null,
+                delegatedBy: delegatedTo?.trim() ? approver : null,
+                delegatedAt: delegatedTo?.trim() ? new Date() : null,
+            },
             include: { session: { select: SESSION_OFFICE_SELECT } },
         });
         const row = await buildNavRow(updated);

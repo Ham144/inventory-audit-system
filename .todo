@@ -3,10 +3,22 @@ revisi:
 [x] mod: page admin masih terbuka ke operator
 [x] fix: tombol "terapkan" kadang tidak berfungsi
 [x] fix: fitur mylogs filter nya belum sempurna
-[x] mod: bulk compare dan print csv di bedain saja 
+[x] mod: bulk compare dan print csv di bedain saja
 [x] mod: kalau sudah match dengan nav, tidak bisa di compare lagi
 [x] mod: bisa input negative di page input oleh operator untuk menyesuaikan input secara mandiri saat menyadari kesalahan hitung fisik
 [x] fix: my logs: page selisih operator ke nav di sku tanpa qty selisih di hide
 [x] mod: visibilitas page sudah diperbaiki (admin gudang (semua halaman kecuali settings), operator (halaman my logs, input, cek selisih ))
 [x] add: judul aplikasi diganti dari "Input Hasil Scan" jadi "input stok"
-[] admin ga boleh input 
+perbaikan dan penambahan stok opname update 24/07/2026 192.168.169.26:
+
+[x] mod: admin tidak perlu liat fitur input
+[x] mod: input angka 0 boleh
+[x] fix: tidak bisa logout
+
+fitur request 27/07/2026
+[x] fix: tombol tetapkan untuk milih tetap kan operator yang benar
+[x] fix: my logs belum muncul, perlu di npx prisma push db
+[x] fix: fitur final correction untuk menetapkan total akhir tanpa logika rak (penjelasan: diantara semua resolved yang ternyata salah, ada 1 rak yang bisa ditetapkan sebagai hasil akhir tanpa memperdulikan hasil resolved lain)
+[x] add: fitur delegasi untuk pembenaran perbaikan sku di page cek selisih untuk menghindari koreksi double, ditetap kan oleh admin (penjelasan: fitur di cek selisih yang bisa di tetapkan oleh admin untuk bisa menunjuk orang yang melihat sku yang salah itu, sehingga role operator hanya melihat selisih yang telah dibebankan padanya)
+[x] mod: fitur default hari di page admin harusnya 1 hari terakhir bukan 7 hari terakhir
+[x] fix: user tipe app belum bisa login "Verifikasi CAPTCHA gagal."

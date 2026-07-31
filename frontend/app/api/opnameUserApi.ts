@@ -5,6 +5,8 @@ export type AppUserRecord = {
   username: string;
   role: string | null;
   office: string | null;
+  type?: string | null;
+  authMethod?: string | null;
   description?: string;
 };
 
@@ -42,6 +44,25 @@ export async function updateAppUserOffice(username: string, office: string | nul
   const response = await axiosInstance.patch<AppUserRecord>(
     `/api/opname/users/${encodeURIComponent(username)}/office`,
     { office },
+  );
+  return response.data;
+}
+
+export async function deleteAppUserFromOpname(username: string) {
+  const response = await axiosInstance.delete<{ success: boolean; message: string }>(
+    `/api/opname/users/${encodeURIComponent(username)}`,
+  );
+  return response.data;
+}
+
+export async function syncNonAdAppUser(payload: {
+  username: string;
+  role?: string;
+  office?: string | null;
+}) {
+  const response = await axiosInstance.post<AppUserRecord>(
+    "/api/opname/users/sync-non-ad",
+    payload,
   );
   return response.data;
 }

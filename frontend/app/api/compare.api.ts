@@ -38,6 +38,13 @@ export type NavCompareRow = {
   resolvedRakCount: number;
   pendingRakCount: number;
   note: string | null;
+  finalCorrectionQty?: number | null;
+  finalCorrectionBy?: string | null;
+  finalCorrectionAt?: string | null;
+  finalCorrectionRak?: number | null;
+  delegatedTo?: string | null;
+  delegatedBy?: string | null;
+  delegatedAt?: string | null;
 };
 
 function toCompareParams(params: CompareQueryParams) {
@@ -112,6 +119,40 @@ export const CompareApi = {
     const response = await axiosInstance.patch<NavCompareRow>(
       `/api/compare/nav/${compareItemId}/note`,
       { note },
+    );
+    return response.data;
+  },
+
+  // Final Correction: admin directly sets physicalQty, bypassing rak logic
+  finalCorrection: async (
+    compareItemId: string,
+    physicalQty: number,
+    rak?: number,
+  ): Promise<NavCompareRow> => {
+    const response = await axiosInstance.post<NavCompareRow>(
+      `/api/compare/nav/${compareItemId}/final-correction`,
+      { physicalQty, rak },
+    );
+    return response.data;
+  },
+
+  deleteFinalCorrection: async (
+    compareItemId: string,
+  ): Promise<NavCompareRow> => {
+    const response = await axiosInstance.delete<NavCompareRow>(
+      `/api/compare/nav/${compareItemId}/final-correction`,
+    );
+    return response.data;
+  },
+
+  // Delegation: admin assigns a user to re-check this SKU
+  delegateSku: async (
+    compareItemId: string,
+    delegatedTo: string | null,
+  ): Promise<NavCompareRow> => {
+    const response = await axiosInstance.patch<NavCompareRow>(
+      `/api/compare/nav/${compareItemId}/delegate`,
+      { delegatedTo },
     );
     return response.data;
   },

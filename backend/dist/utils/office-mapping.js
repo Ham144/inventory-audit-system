@@ -76,3 +76,23 @@ export async function mapOfficeToLocation(officeName) {
     const match = mappings.find((m) => m.officeName.toLowerCase() === name.toLowerCase());
     return match ? match.locationCode : officeName;
 }
+/**
+ * Resolves any office string (officeName or locationCode) to a canonical officeName.
+ * Returns null if the value is unrecognized (e.g. "IT", "01", random strings).
+ */
+export async function resolveOfficeName(raw) {
+    const value = raw.trim();
+    if (!value || value.toLowerCase() === "semua")
+        return null;
+    const mappings = await getMappings();
+    // Already a valid officeName?
+    const byName = mappings.find((m) => m.officeName.toLowerCase() === value.toLowerCase());
+    if (byName)
+        return byName.officeName;
+    // Maybe it's a locationCode?
+    const byCode = mappings.find((m) => m.locationCode.toUpperCase() === value.toUpperCase());
+    if (byCode)
+        return byCode.officeName;
+    // Unknown value
+    return null;
+}

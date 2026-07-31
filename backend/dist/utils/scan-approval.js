@@ -138,8 +138,32 @@ export async function reconcileApprovalAfterGroupChange(groupScans) {
     if (groupScans.length === 0)
         return null;
     const first = groupScans[0];
+    const result = await pool.query(`SELECT id, "scanLogId", "approvedQty", "approvedBy"
+     FROM "ScanQtyApproval"
+     WHERE "sessionId" = $1 AND sku = $2 AND rak = $3 AND "office" = $4`, [first.sessionId, first.sku, first.rak, first.office]);
+    const existingApproval = result.rows[0];
+    if (existingApproval) {
+        if (existingApproval.approvedBy === "system") {
+            if (groupHasOperatorQtyConflict(groupScans)) {
+                await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
+                return null;
+            }
+        }
+        else {
+            const byOperator = aggregateQtyByOperator(groupScans);
+            const approvedScan = groupScans.find((s) => s.id === existingApproval.scanLogId);
+            if (!approvedScan) {
+                await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
+                return null;
+            }
+            const operatorQty = byOperator.get(approvedScan.operator)?.qty;
+            if (operatorQty !== existingApproval.approvedQty) {
+                await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
+                return null;
+            }
+        }
+    }
     if (groupHasOperatorQtyConflict(groupScans)) {
-        await deleteGroupApproval(first.sessionId, first.sku, first.rak, first.office);
         return null;
     }
     return tryAutoApproveUnanimousGroup(groupScans);

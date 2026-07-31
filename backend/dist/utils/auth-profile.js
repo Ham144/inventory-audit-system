@@ -35,9 +35,12 @@ export function extractAuthProfileFields(data) {
         readFieldCI(root, "username", "usernameLdap", "userName", "name");
     if (!username)
         return null;
-    const office = readFieldCI(root, "office", "location", "locationCode", "wilayah") ??
+    const rawOffice = readFieldCI(root, "office", "location", "locationCode", "wilayah") ??
         readFieldCI(dataNode, "office", "location", "locationCode", "wilayah") ??
         readFieldCI(userInfoNode, "office", "location", "locationCode", "wilayah");
+    const office = rawOffice && rawOffice.trim().toUpperCase() === "IT"
+        ? undefined
+        : rawOffice;
     const description = readFieldCI(root, "description", "department", "division", "jobTitle") ??
         readFieldCI(dataNode, "description", "department", "division", "jobTitle") ??
         readFieldCI(userInfoNode, "description", "department", "division", "jobTitle");

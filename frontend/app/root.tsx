@@ -78,18 +78,22 @@ export default function App() {
             office: profile.office,
             description: profile.description,
           });
+          const rawOffice = synced.office ?? profile.office;
+          const cleanOffice = parseAuthProfile({ office: rawOffice })?.office ?? null;
           setUserInfo({
             username: profile.username,
-            office: synced.office ?? profile.office,
+            office: cleanOffice,
             description: profile.description ?? undefined,
             role: resolveUserRole(profile, synced.role),
           });
         } catch {
           try {
             const appUser = await getAppUser();
+            const rawOffice = appUser.office ?? profile.office;
+            const cleanOffice = parseAuthProfile({ office: rawOffice })?.office ?? null;
             setUserInfo({
               username: profile.username,
-              office: appUser.office ?? profile.office,
+              office: cleanOffice,
               description: profile.description ?? undefined,
               role: resolveUserRole(profile, appUser.role),
             });

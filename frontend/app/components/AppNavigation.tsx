@@ -1,14 +1,14 @@
 import { History, ScanLine, Settings, Shield, AlertCircle } from "lucide-react";
 import { Link, useLocation } from "react-router";
-import { canAccessAdmin, isOwner } from "~/libs/user-access";
-import { useUserInfo } from "~/store";
+import { canAccessAdmin, isOwner, isAdmin } from "~/libs/user-access";
+import { useUserInfo, type UserInfo } from "~/store";
 
 const NAV_ITEMS = [
   {
     path: "/input",
     label: "Input",
     icon: ScanLine,
-    show: () => true,
+    show: (user: UserInfo | null | undefined) => !isAdmin(user),
   },
   {
     path: "/admin",

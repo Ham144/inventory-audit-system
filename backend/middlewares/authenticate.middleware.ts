@@ -7,6 +7,7 @@ export const noAuthOriginalUrl = [
   "/so/api/auth/login",
   "/so/api/auth/get",
   "/so/api/auth/verify/whatsapp",
+  "/so/api/auth/logout",
 ];
 
 const authenticate = (req: any, res: any, next: NextFunction) => {

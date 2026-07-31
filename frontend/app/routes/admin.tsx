@@ -60,7 +60,7 @@ import type { AxiosError } from "axios";
 
 function defaultDateFrom(): string {
   const d = new Date();
-  d.setDate(d.getDate() - 7);
+  d.setDate(d.getDate() - 1);
   return d.toISOString().split("T")[0];
 }
 
@@ -116,6 +116,13 @@ interface ProductCompare {
   resolvedRakCount: number;
   pendingRakCount: number;
   note: string | null;
+  finalCorrectionQty?: number | null;
+  finalCorrectionBy?: string | null;
+  finalCorrectionAt?: string | null;
+  finalCorrectionRak?: number | null;
+  delegatedTo?: string | null;
+  delegatedBy?: string | null;
+  delegatedAt?: string | null;
 }
 
 type NavStatusFilter =
@@ -163,6 +170,13 @@ function mapNavCompareItem(raw: NavCompareRow): ProductCompare {
     resolvedRakCount: raw.resolvedRakCount,
     pendingRakCount: raw.pendingRakCount,
     note: raw.note ?? null,
+    finalCorrectionQty: raw.finalCorrectionQty ?? null,
+    finalCorrectionBy: raw.finalCorrectionBy ?? null,
+    finalCorrectionAt: raw.finalCorrectionAt ?? null,
+    finalCorrectionRak: raw.finalCorrectionRak ?? null,
+    delegatedTo: raw.delegatedTo ?? null,
+    delegatedBy: raw.delegatedBy ?? null,
+    delegatedAt: raw.delegatedAt ?? null,
   };
 }
 
@@ -339,6 +353,11 @@ function NavRowExpandedPanel({
   mutatingScanId,
   compact = false,
   isNavSesuai = false,
+  onFinalCorrectionRak,
+  onDeleteFinalCorrection,
+  isFinalCorrecting,
+  isDeletingFinalCorrection,
+  finalCorrectionRak,
 }: {
   rakDetails: ScanCompareRow[];
   onApprove: (scanLogId: string) => void;
@@ -350,6 +369,11 @@ function NavRowExpandedPanel({
   mutatingScanId?: string;
   compact?: boolean;
   isNavSesuai?: boolean;
+  onFinalCorrectionRak: (rak: number, physicalQty: number) => void;
+  onDeleteFinalCorrection: () => void;
+  isFinalCorrecting: boolean;
+  isDeletingFinalCorrection: boolean;
+  finalCorrectionRak?: number | null;
 }) {
   return (
     <div
@@ -380,6 +404,11 @@ function NavRowExpandedPanel({
               isMutatingScan={isMutatingScan}
               mutatingScanId={mutatingScanId}
               isNavSesuai={isNavSesuai}
+              onFinalCorrectionRak={onFinalCorrectionRak}
+              onDeleteFinalCorrection={onDeleteFinalCorrection}
+              isFinalCorrecting={isFinalCorrecting}
+              isDeletingFinalCorrection={isDeletingFinalCorrection}
+              isCurrentFinalCorrectionRak={finalCorrectionRak === rakRow.rak}
             />
           ))}
         </div>
@@ -435,7 +464,7 @@ function NavNoteButton({
             <h3 className="font-bold text-sm text-slate-800">Catatan</h3>
             <p className="text-[10px] font-mono text-slate-500 mt-0.5">{sku}</p>
             <textarea
-              className="textarea textarea-bordered w-full mt-3 text-sm min-h-[100px] bg-white text-slate-800 border-slate-200"
+              className="textarea textarea-bordered w-full mt-3 text-sm min-h-25 bg-white text-slate-800 border-slate-200"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Tulis catatan untuk barang ini..."
@@ -490,6 +519,11 @@ function NavCompareItem({
   onDeleteScan,
   isMutatingScan,
   mutatingScanId,
+  onFinalCorrection,
+  isFinalCorrecting,
+  onFinalCorrectionRak,
+  onDeleteFinalCorrection,
+  isDeletingFinalCorrection,
 }: {
   nav: ProductCompare;
   rakDetails: ScanCompareRow[];
@@ -506,9 +540,15 @@ function NavCompareItem({
   onDeleteScan: (scanLogId: string) => void;
   isMutatingScan: boolean;
   mutatingScanId?: string;
+  onFinalCorrection: (physicalQty: number) => void;
+  isFinalCorrecting: boolean;
+  onFinalCorrectionRak: (rak: number, physicalQty: number) => void;
+  onDeleteFinalCorrection: () => void;
+  isDeletingFinalCorrection: boolean;
 }) {
   const delta = navDelta(nav);
-  const canCompareNav = nav.pendingRakCount === 0;
+  const canCompareNav =
+    nav.pendingRakCount === 0 || nav.finalCorrectionQty !== null;
   const accent = navRowAccentClass(nav);
 
   return (
@@ -557,7 +597,7 @@ function NavCompareItem({
             <p className="text-base font-black text-slate-800">
               {nav.physicalQty}
             </p>
-            {nav.pendingRakCount > 0 && (
+            {nav.pendingRakCount > 0 && nav.finalCorrectionQty === null && (
               <p className="text-[9px] text-amber-600 font-bold mt-0.5">
                 belum lengkap
               </p>
@@ -601,7 +641,9 @@ function NavCompareItem({
           <button
             type="button"
             className="btn btn-sm btn-outline btn-primary flex-1"
-            disabled={!canCompareNav || isComparePending || nav.status === "sesuai"}
+            disabled={
+              !canCompareNav || isComparePending || nav.status === "sesuai"
+            }
             title={
               nav.status === "sesuai"
                 ? "Sudah sesuai dengan NAV"
@@ -612,6 +654,27 @@ function NavCompareItem({
             onClick={onCompareNav}
           >
             {isComparePending ? "Memproses..." : "Compare NAV"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline border-violet-300 text-violet-700 hover:bg-violet-50"
+            disabled={isFinalCorrecting}
+            onClick={() => {
+              const input = prompt(
+                `Koreksi akhir untuk ${nav.sku} (${nav.name}).\nMasukkan angka total fisik akhir (tanpa logika rak):`,
+                String(nav.physicalQty),
+              );
+              if (input === null) return;
+              const qty = Number(input);
+              if (!Number.isFinite(qty) || qty < 0 || !Number.isInteger(qty)) {
+                alert("Masukkan angka bulat non-negatif.");
+                return;
+              }
+              onFinalCorrection(qty);
+            }}
+            title="Koreksi akhir: tetapkan total fisik tanpa logika rak"
+          >
+            {isFinalCorrecting ? "..." : "Koreksi Akhir"}
           </button>
         </div>
       </div>
@@ -655,7 +718,7 @@ function NavCompareItem({
           <span className="font-black text-slate-800 text-sm">
             {nav.physicalQty}
           </span>
-          {nav.pendingRakCount > 0 && (
+          {nav.pendingRakCount > 0 && nav.finalCorrectionQty === null && (
             <p className="text-[10px] text-amber-600 font-bold mt-0.5">
               belum lengkap
             </p>
@@ -685,11 +748,13 @@ function NavCompareItem({
             showLabel
           />
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3">
+        <div className="col-span-1 border-l border-slate-150 pl-3 flex flex-col gap-1">
           <button
             type="button"
             className="btn btn-xs btn-outline btn-primary w-full"
-            disabled={!canCompareNav || isComparePending || nav.status === "sesuai"}
+            disabled={
+              !canCompareNav || isComparePending || nav.status === "sesuai"
+            }
             title={
               nav.status === "sesuai"
                 ? "Sudah sesuai dengan NAV"
@@ -703,7 +768,7 @@ function NavCompareItem({
           </button>
         </div>
       </div>
-
+            
       {isExpanded && (
         <NavRowExpandedPanel
           rakDetails={rakDetails}
@@ -716,6 +781,11 @@ function NavCompareItem({
           mutatingScanId={mutatingScanId}
           compact
           isNavSesuai={nav.status === "sesuai"}
+          onFinalCorrectionRak={onFinalCorrectionRak}
+          onDeleteFinalCorrection={onDeleteFinalCorrection}
+          isFinalCorrecting={isFinalCorrecting}
+          isDeletingFinalCorrection={isDeletingFinalCorrection}
+          finalCorrectionRak={nav.finalCorrectionRak}
         />
       )}
     </div>
@@ -732,6 +802,11 @@ function RakDetailRow({
   isMutatingScan,
   mutatingScanId,
   isNavSesuai = false,
+  onFinalCorrectionRak,
+  onDeleteFinalCorrection,
+  isFinalCorrecting,
+  isDeletingFinalCorrection,
+  isCurrentFinalCorrectionRak = false,
 }: {
   item: ScanCompareRow;
   onApprove: (scanLogId: string) => void;
@@ -742,6 +817,11 @@ function RakDetailRow({
   isMutatingScan: boolean;
   mutatingScanId?: string;
   isNavSesuai?: boolean;
+  onFinalCorrectionRak: (rak: number, physicalQty: number) => void;
+  onDeleteFinalCorrection: () => void;
+  isFinalCorrecting: boolean;
+  isDeletingFinalCorrection: boolean;
+  isCurrentFinalCorrectionRak?: boolean;
 }) {
   const [editingScan, setEditingScan] = useState<{
     id: string;
@@ -758,7 +838,7 @@ function RakDetailRow({
   const submitEdit = () => {
     if (!editingScan) return;
     const qty = Number(draftQty);
-    if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(qty)) return;
+    if (!Number.isFinite(qty) || qty < 0 || !Number.isInteger(qty)) return;
     onUpdateQty(editingScan.id, qty);
     setEditingScan(null);
   };
@@ -772,12 +852,14 @@ function RakDetailRow({
 
   return (
     <div
-      className={`rounded-xl border p-2.5 sm:p-3 ${
-        !item.match
-          ? item.resolved
-            ? "border-emerald-200 bg-emerald-50/20"
-            : "border-amber-200 bg-amber-50/20"
-          : "border-emerald-200 bg-emerald-50/30"
+      className={`rounded-xl border p-2.5 sm:p-3 transition-all ${
+        isCurrentFinalCorrectionRak
+          ? "border-violet-300 bg-violet-50/20 ring-2 ring-violet-100"
+          : !item.match
+            ? item.resolved
+              ? "border-emerald-200 bg-emerald-50/20"
+              : "border-amber-200 bg-amber-50/20"
+            : "border-emerald-200 bg-emerald-50/30"
       }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
@@ -786,14 +868,49 @@ function RakDetailRow({
             Rak {item.rak}
           </span>
           <ScanStatusBadge row={item} />
-        </div>
-        <div className="text-right">
-          <span className="text-xs font-black text-slate-800">
-            {item.approvedQty ?? "—"} pcs
-          </span>
-          {item.approvedBy && (
-            <p className="text-[10px] text-slate-400">oleh {item.approvedBy}</p>
+          {isCurrentFinalCorrectionRak && (
+            <span className="text-[10px] font-bold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded border border-violet-200">
+              Koreksi Akhir
+            </span>
           )}
+        </div>
+        <div className="flex items-center gap-2">
+          {item.approvedQty !== null && (
+            <div className="flex items-center">
+              {isCurrentFinalCorrectionRak ? (
+                <button
+                  type="button"
+                  className="btn btn-[9px] h-5 min-h-5 px-1.5 bg-violet-600 hover:bg-violet-700 border-none text-white font-bold rounded"
+                  disabled={isDeletingFinalCorrection}
+                  onClick={onDeleteFinalCorrection}
+                >
+                  {isDeletingFinalCorrection ? "..." : "Reset"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-[9px] h-5 min-h-5 px-1.5 bg-white hover:bg-violet-50 border border-violet-200 text-violet-700 font-bold rounded"
+                  disabled={isFinalCorrecting}
+                  onClick={() =>
+                    onFinalCorrectionRak(item.rak, item.approvedQty!)
+                  }
+                  title="Gunakan rak ini saja sebagai fisik SKU ini"
+                >
+                  {isFinalCorrecting ? "..." : "Final Correction"}
+                </button>
+              )}
+            </div>
+          )}
+          <div className="text-right">
+            <span className="text-xs font-black text-slate-800">
+              {item.approvedQty ?? "—"} pcs
+            </span>
+            {item.approvedBy && (
+              <p className="text-[10px] text-slate-400">
+                oleh {item.approvedBy}
+              </p>
+            )}
+          </div>
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -825,9 +942,16 @@ function RakDetailRow({
                 <button
                   type="button"
                   className="btn btn-xs btn-ghost text-slate-500"
-                  disabled={(isMutatingScan && mutatingScanId === scan.id) || isNavSesuai}
+                  disabled={
+                    (isMutatingScan && mutatingScanId === scan.id) ||
+                    isNavSesuai
+                  }
                   onClick={() => openEdit(scan)}
-                  title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : "Edit qty"}
+                  title={
+                    isNavSesuai
+                      ? "Sudah sesuai NAV, tidak dapat diubah"
+                      : "Edit qty"
+                  }
                   aria-label="Edit qty"
                 >
                   <Pencil className="h-3 w-3" />
@@ -835,9 +959,16 @@ function RakDetailRow({
                 <button
                   type="button"
                   className="btn btn-xs btn-ghost text-red-500"
-                  disabled={(isMutatingScan && mutatingScanId === scan.id) || isNavSesuai}
+                  disabled={
+                    (isMutatingScan && mutatingScanId === scan.id) ||
+                    isNavSesuai
+                  }
                   onClick={() => handleDelete(scan.id, scan.operator)}
-                  title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : "Hapus scan"}
+                  title={
+                    isNavSesuai
+                      ? "Sudah sesuai NAV, tidak dapat diubah"
+                      : "Hapus scan"
+                  }
                   aria-label="Hapus scan"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -846,8 +977,15 @@ function RakDetailRow({
                   <button
                     type="button"
                     className={`btn btn-xs ${isApproved ? "btn-success" : "btn-primary"}`}
-                    disabled={(isApproving && approvingScanId === scan.id) || isNavSesuai}
-                    title={isNavSesuai ? "Sudah sesuai NAV, tidak dapat diubah" : undefined}
+                    disabled={
+                      (isApproving && approvingScanId === scan.id) ||
+                      isNavSesuai
+                    }
+                    title={
+                      isNavSesuai
+                        ? "Sudah sesuai NAV, tidak dapat diubah"
+                        : undefined
+                    }
                     onClick={() => onApprove(scan.id)}
                   >
                     {isApproved ? "Terpilih" : "Tetapkan"}
@@ -867,7 +1005,7 @@ function RakDetailRow({
             </p>
             <input
               type="number"
-              min={1}
+              min={0}
               step={1}
               className="input input-bordered input-sm w-full mt-3 bg-white text-slate-800 border-slate-200"
               value={draftQty}
@@ -1211,7 +1349,10 @@ export default function AdminPage() {
       showToast("Qty operator berhasil ditetapkan", "success");
     },
     onError: (err) => {
-      showToast(extractApiError(err, "Gagal menetapkan qty operator"), "warning");
+      showToast(
+        extractApiError(err, "Gagal menetapkan qty operator"),
+        "warning",
+      );
     },
   });
 
@@ -1264,6 +1405,43 @@ export default function AdminPage() {
     },
     onError: () => {
       showToast("Gagal menyimpan catatan", "warning");
+    },
+  });
+
+  const finalCorrectionMutation = useMutation({
+    mutationFn: ({
+      id,
+      physicalQty,
+      rak,
+    }: {
+      id: string;
+      physicalQty: number;
+      rak?: number;
+    }) => CompareApi.finalCorrection(id, physicalQty, rak),
+    onSuccess: () => {
+      invalidateCompareQueries();
+      showToast("Koreksi akhir berhasil diterapkan", "success");
+    },
+    onError: (err) => {
+      showToast(
+        extractApiError(err, "Gagal menerapkan koreksi akhir"),
+        "warning",
+      );
+    },
+  });
+
+  const deleteFinalCorrectionMutation = useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      CompareApi.deleteFinalCorrection(id),
+    onSuccess: () => {
+      invalidateCompareQueries();
+      showToast("Koreksi akhir berhasil dibatalkan", "success");
+    },
+    onError: (err) => {
+      showToast(
+        extractApiError(err, "Gagal membatalkan koreksi akhir"),
+        "warning",
+      );
     },
   });
 
@@ -1429,7 +1607,8 @@ export default function AdminPage() {
       pendingRakCount: nav.pendingRakCount,
       note: nav.note ?? "",
       hasil: "laporan",
-      keterangan: nav.status === "belum_compare" ? "belum compare" : "sudah compare",
+      keterangan:
+        nav.status === "belum_compare" ? "belum compare" : "sudah compare",
     }));
 
     const csvContent = buildBulkCompareCsv(csvRows, dateFrom, dateTo);
@@ -1579,7 +1758,7 @@ export default function AdminPage() {
           ========================================== */}
       <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Metric 1 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-[60px] max-md:min-w-[120px]">
+        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
           <div className="absolute top-0 right-0 h-16 w-16 bg-indigo-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -1596,7 +1775,7 @@ export default function AdminPage() {
         </div>
 
         {/* Metric 2 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-[60px] max-md:min-w-[120px]">
+        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
           <div className="absolute top-0 right-0 h-16 w-16 bg-red-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -1613,7 +1792,7 @@ export default function AdminPage() {
         </div>
 
         {/* Metric 3 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-[60px] max-md:min-w-[120px]">
+        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
           <div className="absolute top-0 right-0 h-16 w-16 bg-amber-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -1630,7 +1809,7 @@ export default function AdminPage() {
         </div>
 
         {/* Metric 4 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-[60px] max-md:min-w-[120px]">
+        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
           <div className="absolute top-0 right-0 h-16 w-16 bg-emerald-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -1654,7 +1833,7 @@ export default function AdminPage() {
         <div className="bg-white border border-slate-200/85 rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
           {/* Baris 1: filter server */}
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3 sm:gap-4">
-            <div className="flex flex-col gap-1.5 w-full sm:min-w-[180px] sm:w-auto">
+            <div className="flex flex-col gap-1.5 w-full sm:min-w-45 sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <MapPin className="h-3 w-3 text-indigo-500" />
                 Wilayah / Gudang
@@ -1693,7 +1872,7 @@ export default function AdminPage() {
               )}
             </div>
 
-            <div className="flex flex-col gap-1.5 w-full sm:min-w-[140px] sm:w-auto">
+            <div className="flex flex-col gap-1.5 w-full sm:min-w-35 sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <SlidersHorizontal className="h-3 w-3 text-indigo-500" />
                 Nomor Rak
@@ -1712,7 +1891,7 @@ export default function AdminPage() {
               </select>
             </div>
 
-            <div className="flex flex-col gap-1.5 w-full sm:flex-1 sm:min-w-[200px]">
+            <div className="flex flex-col gap-1.5 w-full sm:flex-1 sm:min-w-50">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <Search className="h-3 w-3 text-indigo-500" />
                 Cari SKU / Nama
@@ -1750,7 +1929,7 @@ export default function AdminPage() {
                   value={dateFrom}
                   max={dateTo || undefined}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className={`input input-bordered input-sm bg-slate-50 font-medium w-[140px] ${dateRangeError ? "input-error" : ""}`}
+                  className={`input input-bordered input-sm bg-slate-50 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
                 />
                 <span className="text-[10px] text-slate-400 font-bold shrink-0">
                   s/d
@@ -1760,7 +1939,7 @@ export default function AdminPage() {
                   value={dateTo}
                   min={dateFrom || undefined}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className={`input input-bordered input-sm bg-slate-50 font-medium w-[140px] ${dateRangeError ? "input-error" : ""}`}
+                  className={`input input-bordered input-sm bg-slate-50 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
                 />
               </div>
               {dateRangeError && (
@@ -1890,7 +2069,11 @@ export default function AdminPage() {
                 type="button"
                 className="btn btn-outline btn-sm gap-1.5 border-slate-300 text-slate-700 hover:bg-slate-100"
                 onClick={exportToCsv}
-                disabled={!isDateRangeValid || isBulkComparing || filteredNavRows.length === 0}
+                disabled={
+                  !isDateRangeValid ||
+                  isBulkComparing ||
+                  filteredNavRows.length === 0
+                }
               >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
@@ -1911,7 +2094,7 @@ export default function AdminPage() {
 
           <div className="overflow-y-auto flex-1 lg:max-h-[75vh]">
             {/* Desktop table header */}
-            <div className="hidden lg:block min-w-[900px]">
+            <div className="hidden lg:block min-w-225">
               <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 py-3 px-4 sticky top-0 z-10">
                 <div className="col-span-3">Info Barang</div>
                 <div className="col-span-2 border-l border-slate-200 pl-3">
@@ -1938,7 +2121,7 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="divide-y divide-slate-150 lg:min-w-[900px]">
+            <div className="divide-y divide-slate-150 lg:min-w-225">
               {navCompareQuery.isLoading ? (
                 <NavTableSkeleton />
               ) : dateRangeError ? (
@@ -2035,6 +2218,31 @@ export default function AdminPage() {
                       }
                       isMutatingScan={isMutatingScan}
                       mutatingScanId={mutatingScanId}
+                      onFinalCorrection={(physicalQty) =>
+                        finalCorrectionMutation.mutate({
+                          id: nav.id,
+                          physicalQty,
+                        })
+                      }
+                      isFinalCorrecting={
+                        finalCorrectionMutation.isPending &&
+                        finalCorrectionMutation.variables?.id === nav.id &&
+                        finalCorrectionMutation.variables?.rak === undefined
+                      }
+                      onFinalCorrectionRak={(rak, physicalQty) =>
+                        finalCorrectionMutation.mutate({
+                          id: nav.id,
+                          physicalQty,
+                          rak,
+                        })
+                      }
+                      onDeleteFinalCorrection={() =>
+                        deleteFinalCorrectionMutation.mutate({ id: nav.id })
+                      }
+                      isDeletingFinalCorrection={
+                        deleteFinalCorrectionMutation.isPending &&
+                        deleteFinalCorrectionMutation.variables?.id === nav.id
+                      }
                     />
                   );
                 })

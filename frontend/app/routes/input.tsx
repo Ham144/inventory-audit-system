@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { redirect, useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   MapPin,
   Search,
@@ -84,7 +84,7 @@ export default function Scan() {
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(
     null,
   );
-  const { userInfo } = useUserInfo();
+  const { userInfo, clearUserInfo } = useUserInfo();
   const fixedOffice = userOffice(userInfo);
   const showOfficePicker = isOwner(userInfo) || !fixedOffice;
   const [locations, setLocations] = useState<LocationItem[]>([]);
@@ -276,6 +276,7 @@ export default function Scan() {
           "",
         rak: Number(rak),
         office: activeScanOffice,
+        qty: Number(qty),
       });
 
       if (response.data) {
@@ -323,7 +324,7 @@ export default function Scan() {
       showToast("Masukkan nomor rak yang valid (Angka)!", "error");
       return;
     }
-    if (!qty || isNaN(Number(qty)) || Number(qty) === 0) {
+    if (qty === "" || isNaN(Number(qty)) || Number(qty) < 0) {
       showToast("Masukkan Qty fisik yang valid!", "error");
       return;
     }
@@ -344,6 +345,8 @@ export default function Scan() {
   useEffect(() => {
     if (userInfo === null) {
       navigate("/login", { replace: true });
+    } else if (isAdmin(userInfo)) {
+      navigate("/admin", { replace: true });
     }
   }, [userInfo, navigate]);
 
@@ -377,6 +380,7 @@ export default function Scan() {
                 className="text-red-600 hover:text-red-800 cursor-pointer"
                 onClick={async () => {
                   await logout();
+                  clearUserInfo();
                   navigate("/login");
                 }}
               >
@@ -393,6 +397,7 @@ export default function Scan() {
                 className="text-red-600 hover:text-red-800 cursor-pointer"
                 onClick={async () => {
                   await logout();
+                  clearUserInfo();
                   navigate("/login");
                 }}
               >

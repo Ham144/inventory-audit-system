@@ -35,7 +35,9 @@ export function adminCanPickOffice(user: UserInfo | null | undefined): boolean {
 }
 
 export function userOffice(user: UserInfo | null | undefined): string {
-  return user?.office?.trim() ?? "";
+  const raw = user?.office?.trim() ?? "";
+  if (raw.toUpperCase() === "IT") return "";
+  return raw;
 }
 
 export function ownerNeedsLocationPicker(

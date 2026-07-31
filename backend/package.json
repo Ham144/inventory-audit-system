@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon -e ts,json --exec tsx index.ts",
+    "pm2": "tsx index.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "postinstall": "node scripts/postinstall-prisma.mjs",
     "start": "npx prisma db push && node dist/index.js"

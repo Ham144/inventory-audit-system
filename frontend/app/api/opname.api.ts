@@ -11,6 +11,17 @@ export interface ScanLog {
   operator: string;
 }
 
+// Shape returned by GET /api/trace (TracingInput table)
+export interface TraceLog {
+  id: string;
+  username: string;
+  sku: string;
+  rak: number;
+  physicalQty: number;
+  office: string;
+  createdat: string; // Prisma field name (lowercase)
+}
+
 export async function getScans(params?: { office?: string; rak?: string }) {
   const response = await axiosInstance.get<ScanLog[]>("/api/opname/scans", {
     params: {
@@ -19,4 +30,24 @@ export async function getScans(params?: { office?: string; rak?: string }) {
     },
   });
   return response.data;
+}
+
+export async function traceLogs(params?: {
+  office?: string;
+  rak?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const response = await axiosInstance.get<{ success: boolean; data: TraceLog[] }>(
+    "/api/trace",
+    {
+      params: {
+        office: params?.office,
+        rak: params?.rak,
+        startDate: params?.startDate,
+        endDate: params?.endDate,
+      },
+    },
+  );
+  return response.data.data ?? [];
 }

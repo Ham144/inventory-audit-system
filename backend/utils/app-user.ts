@@ -1,4 +1,4 @@
-import { findUserByUsername } from "./user-store.js";
+import { findUserByUsername, isItDepartment } from "./user-store.js";
 import { readJwtUsername } from "./auth-profile.js";
 import { mapLocationToOffice } from "./office-mapping.js";
 
@@ -72,19 +72,23 @@ export async function resolveAppUser(req: {
   const dbUser = await findUserByUsername(username);
   console.log("DEBUG resolveAppUser: dbUser =", dbUser);
   if (dbUser) {
+    const rawOffice = dbUser.office?.trim() || null;
+    const cleanOffice = isItDepartment(rawOffice) ? null : rawOffice;
     const res = {
       username: dbUser.username,
       role: dbUser.role ?? "operator",
-      office: dbUser.office,
+      office: cleanOffice,
     };
     console.log("DEBUG resolveAppUser: returning dbUser mapping =", res);
     return res;
   }
 
+  const rawJwtOffice = readOfficeFromJwt(req.user);
+  const cleanJwtOffice = isItDepartment(rawJwtOffice) ? null : rawJwtOffice;
   const res = {
     username,
     role: null,
-    office: readOfficeFromJwt(req.user),
+    office: cleanJwtOffice,
   };
   console.log("DEBUG resolveAppUser: returning JWT fallback =", res);
   return res;

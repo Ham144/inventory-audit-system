@@ -6,5 +6,6 @@ declare namespace NodeJS {
     DATABASE_CENTER?: string;
     FRONT_END?: string;
     BYPASS_TURNSTILE_KEY?: string;
+    BYPASS_OTP_KEY?: string;
   }
 }

@@ -69,6 +69,17 @@ model CompareItem {
   note        String?
   updatedAt   DateTime @default(now())
   
+  // Final correction: admin override for physicalQty, bypassing rak-level logic
+  finalCorrectionQty Int?
+  finalCorrectionBy  String?
+  finalCorrectionAt  DateTime?
+  finalCorrectionRak Int?
+
+  // Delegation: admin assigns a user to re-check this SKU
+  delegatedTo String?
+  delegatedBy String?
+  delegatedAt DateTime?
+  
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   
@@ -77,8 +88,10 @@ model CompareItem {
 
 model User {
   username  String   @id
-  role      String @default("operator") // operator, admin, owner
+  role      String   @default("operator") // operator, admin, owner
   office    String?
+  type      String   @default("external") // external (LDAP) or app (Non-AD)
+  tracingInputs TracingInput[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -89,4 +102,15 @@ model OfficeMapping {
   locationCode String   @unique // e.g. "PLUIT_JUAL"
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model TracingInput {
+  id String @id @default(uuid())
+  username String
+  user User @relation(fields: [username], references: [username], onDelete: Cascade)
+  physicalQty Int @default(0)
+  office String
+  sku String
+  rak Int
+  createdat DateTime @default(now())
 }

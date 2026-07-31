@@ -5,6 +5,7 @@ import {
   mapLocationToOffice,
   mapLocationToOfficeAsync,
   mapOfficeToLocation,
+  resolveOfficeName,
 } from "../utils/office-mapping.js";
 
 type SessionScopeWhere =
@@ -29,6 +30,8 @@ import {
   syncUserProfile,
   updateUserRole,
   updateUserOffice,
+  deleteUser,
+  upsertUser,
 } from "../utils/user-store.js";
 import {
   parseCatalogList,
@@ -40,6 +43,7 @@ import {
   filterHiddenProducts,
   isHiddenProductSku,
 } from "../utils/product-filter.js";
+import { traceInput } from "./trace.router.js";
 
 const router = express.Router();
 
@@ -161,6 +165,201 @@ router.patch("/users/:username/office", async (req: any, res: Response) => {
   }
 });
 
+const STRIP_REQUEST_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "accept-encoding",
+]);
+
+function buildForwardHeaders(req: any): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(req.headers || {})) {
+    if (STRIP_REQUEST_HEADERS.has(key.toLowerCase())) continue;
+    if (typeof value === "string") {
+      headers[key] = value;
+    } else if (Array.isArray(value)) {
+      headers[key] = value.join("; ");
+    }
+  }
+  return headers;
+}
+
+router.delete("/users/:username", async (req: any, res: Response) => {
+  try {
+    const appUser = await resolveAppUser(req);
+    if (!canAccessAdmin(appUser)) {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    const targetUsername = (req.params.username as string)?.trim();
+    if (!targetUsername) {
+      return res.status(400).json({ message: "Username wajib diisi" });
+    }
+
+    if (targetUsername === appUser?.username) {
+      return res
+        .status(403)
+        .json({ message: "Tidak dapat menghapus akun sendiri" });
+    }
+
+    const headers = buildForwardHeaders(req);
+
+    // 1. Cari Mongo ObjectId (_id) user di backend external
+    let externalId = targetUsername;
+    let userExistsOnExternal = true;
+
+    if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
+      try {
+        const searchRes = await axios.get(
+          `${databaseCenter()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`,
+          { headers, validateStatus: () => true },
+        );
+
+        if (searchRes.status === 404) {
+          userExistsOnExternal = false;
+        } else if (searchRes.status >= 200 && searchRes.status < 300) {
+          const rawData = searchRes.data;
+          const list = Array.isArray(rawData)
+            ? rawData
+            : Array.isArray(rawData?.data)
+              ? rawData.data
+              : [rawData?.data || rawData?.user || rawData];
+
+          const targetLower = targetUsername.toLowerCase();
+          const found =
+            list.find(
+              (u: any) =>
+                u &&
+                typeof u === "object" &&
+                (u.username?.toLowerCase() === targetLower ||
+                  u.userName?.toLowerCase() === targetLower ||
+                  u.usernameLdap?.toLowerCase() === targetLower),
+            ) || list[0];
+
+          const rawId = found?._id || found?.id;
+          const idStr = rawId
+            ? String(rawId).replace(/^ObjectId\(['"]?(.*?)['"]?\)$/, "$1")
+            : "";
+          if (/^[0-9a-fA-F]{24}$/.test(idStr)) {
+            externalId = idStr;
+          }
+        }
+
+        // Jika searchAccount belum mendapatkan 24-char ObjectId, coba getAllAccount
+        if (!/^[0-9a-fA-F]{24}$/.test(externalId)) {
+          const allRes = await axios.get(
+            `${databaseCenter()}/api/auth/getAllAccount`,
+            { headers, validateStatus: () => true },
+          );
+
+          if (allRes.status >= 200 && allRes.status < 300) {
+            const rawAll = allRes.data;
+            const allList = Array.isArray(rawAll)
+              ? rawAll
+              : Array.isArray(rawAll?.data)
+                ? rawAll.data
+                : [rawAll?.data || rawAll];
+
+            const targetLower = targetUsername.toLowerCase();
+            const foundAll = allList.find(
+              (u: any) =>
+                u &&
+                typeof u === "object" &&
+                (u.username?.toLowerCase() === targetLower ||
+                  u.userName?.toLowerCase() === targetLower ||
+                  u.usernameLdap?.toLowerCase() === targetLower),
+            );
+
+            const rawId = foundAll?._id || foundAll?.id;
+            const idStr = rawId
+              ? String(rawId).replace(/^ObjectId\(['"]?(.*?)['"]?\)$/, "$1")
+              : "";
+            if (/^[0-9a-fA-F]{24}$/.test(idStr)) {
+              externalId = idStr;
+              userExistsOnExternal = true;
+            } else if (!foundAll && searchRes.status === 404) {
+              userExistsOnExternal = false;
+            }
+          }
+        }
+      } catch (err: unknown) {
+        console.warn("Gagal pencarian user external:", errorMessage(err));
+      }
+    }
+
+    // 2. Eksekusi penghapusan di external backend TERLEBIH DAHULU jika user ada di external
+    if (userExistsOnExternal) {
+      if (!/^[0-9a-fA-F]{24}$/.test(externalId)) {
+        return res.status(400).json({
+          message: `Gagal menghapus user: MongoDB _id tidak ditemukan untuk user "${targetUsername}" di server external.`,
+        });
+      }
+
+      const deleteExtRes = await axios.delete(
+        `${databaseCenter()}/api/auth/deleteAppUser/${externalId}`,
+        { headers, validateStatus: () => true },
+      );
+
+      const isSuccessStatus =
+        deleteExtRes.status >= 200 && deleteExtRes.status < 300;
+      const isBodySuccess = deleteExtRes.data?.success !== false;
+
+      // CRITICAL: Jika external backend gagal, BATALKAN PENGHAPUSAN LOKAL dan return error!
+      if (!isSuccessStatus || !isBodySuccess) {
+        const extMsg =
+          deleteExtRes.data?.message ||
+          deleteExtRes.data?.error ||
+          `Status HTTP ${deleteExtRes.status}`;
+        return res.status(deleteExtRes.status >= 400 ? deleteExtRes.status : 500).json({
+          message: `Gagal menghapus user di server external: ${extMsg}`,
+        });
+      }
+    }
+
+    // 3. HANYA JIKA PENGHAPUSAN EXTERNAL BENAR-BENAR BERHASIL, hapus dari DB lokal (TracingInput & User)
+    await deleteUser(targetUsername);
+
+    return res.json({
+      success: true,
+      message: `User "${targetUsername}" berhasil dihapus dari sistem external dan lokal`,
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.post("/users/sync-non-ad", async (req: any, res: Response) => {
+  try {
+    const appUser = await resolveAppUser(req);
+    if (!canAccessAdmin(appUser)) {
+      return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    const { username, role, office } = req.body as {
+      username?: string;
+      role?: string;
+      office?: string | null;
+    };
+
+    if (!username?.trim()) {
+      return res.status(400).json({ message: "Username wajib diisi" });
+    }
+
+    const updated = await upsertUser({
+      username: username.trim(),
+      role: role ?? "operator",
+      office: office ?? null,
+      type: "app",
+    });
+
+    return res.json(updated);
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
 const databaseCenter = () =>
   process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
 
@@ -174,12 +373,16 @@ async function fetchCatalogProducts() {
   );
   return filterHiddenProducts(parseCatalogList(response.data));
 }
+// Tambahkan parameter opsional 'tx' dengan tipe data Prisma.TransactionClient atau any
+async function seedSessionCatalog(sessionId: string, tx?: any) {
+  // Gunakan 'tx' jika dikirim dari transaksi, jika tidak ada gunakan 'prisma' biasa
+  const db = tx || prisma;
 
-async function seedSessionCatalog(sessionId: string) {
   try {
     const dataList = await fetchCatalogProducts();
     if (dataList.length > 0) {
-      await prisma.compareItem.createMany({
+      // Ganti 'prisma' menjadi 'db' agar mengikuti jalur transaksi
+      await db.compareItem.createMany({
         data: dataList.map((p) => toCompareItemSeed(p, sessionId)),
         skipDuplicates: true,
       });
@@ -189,6 +392,9 @@ async function seedSessionCatalog(sessionId: string) {
       "Gagal melakukan populasi produk awal sesi:",
       errorMessage(err),
     );
+    // CRITICAL: Lempar kembali erornya agar $transaction tahu ada kegagalan
+    // dan langsung melakukan ROLLBACK (membatalkan pembuatan sesi)
+    throw err;
   }
 }
 
@@ -246,36 +452,46 @@ router.get("/session/active", async (req: Request, res: Response) => {
   }
 });
 
-// 2. POST create new session (closes ongoing one)
 router.post("/session/create", async (req: Request, res: Response) => {
   try {
-    const { name, office } = req.body as {
-      name?: string;
-      office?: string;
-    };
+    const { name, office } = req.body as { name?: string; office?: string };
     const loc = await mapLocationToOfficeAsync(office || "01");
 
-    await prisma.opnameSession.updateMany({
-      where: {
-        office: loc,
-        status: "ONGOING",
-      },
-      data: {
-        status: "COMPLETED",
-      },
+    // Eksekusi semua operasi database di dalam satu transaksi aman
+    const session = await prisma.$transaction(async (tx) => {
+      // 1. Tutup sesi yang sedang berjalan di kantor tersebut (jika ada)
+      await tx.opnameSession.updateMany({
+        where: {
+          office: loc,
+          status: "ONGOING",
+        },
+        data: {
+          status: "COMPLETED",
+        },
+      });
+
+      // 2. Buat sesi opname yang baru
+      const defaultName = `Opname Sesi - ${new Date().toLocaleDateString("id-ID")}`;
+      const newSession = await tx.opnameSession.create({
+        data: {
+          name: name || defaultName,
+          office: loc,
+          status: "ONGOING",
+        },
+      });
+
+      // 3. Jalankan seeding katalog untuk sesi baru ini
+      // Pastikan fungsi seedSessionCatalog Anda mendukung pengiriman client transaksi 'tx'
+      // agar berjalan di dalam transaksi yang sama.
+      await seedSessionCatalog(newSession.id, tx);
+
+      return newSession;
     });
 
-    const session = await prisma.opnameSession.create({
-      data: {
-        name: name || `Opname Sesi - ${new Date().toLocaleDateString("id-ID")}`,
-        office: loc,
-        status: "ONGOING",
-      } as never,
-    });
+    // 4. Setelah transaksi database sukses penuh, audit logging dapat diintegrasikan di sini jika diperlukan
 
-    await seedSessionCatalog(session.id);
-
-    return res.json(session);
+    // 5. Kembalikan respons sukses ke client
+    return res.status(201).json(session);
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }
@@ -303,21 +519,21 @@ router.post("/scan", async (req: any, res: Response) => {
         .json({ message: "SKU tidak tersedia untuk opname" });
     }
 
-    // Resolve office asynchronously to avoid cache-miss on server startup
-    // (mapLocationToOffice synchronous version may return location code if cache is empty)
+    // Prefer the explicitly chosen office from request body over user profile office.
+    // resolveOfficeName accepts both officeName ("WL Glodok") and locationCode ("GLD_JUAL").
     const rawOffice = office?.trim() || appUser?.office?.trim();
     if (!rawOffice) {
-      return res
-        .status(403)
-        .json({
-          message:
-            "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
-        });
+      return res.status(403).json({
+        message:
+          "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+      });
     }
 
-    const loc = await mapLocationToOfficeAsync(rawOffice);
-    if (!loc?.trim()) {
-      return res.status(400).json({ message: "Office/lokasi tidak valid" });
+    const loc = await resolveOfficeName(rawOffice);
+    if (!loc) {
+      return res.status(400).json({
+        message: `Office "${rawOffice}" tidak dikenali. Pastikan wilayah/lokasi sudah terdaftar di sistem, atau hubungi admin untuk menyetel office pada profil Anda.`,
+      });
     }
 
     const operator = readJwtUsername(req.user);
@@ -364,6 +580,15 @@ router.post("/scan", async (req: any, res: Response) => {
             sessionId: session.id,
           } as never,
         });
+
+    // Record tracing input log for auditing scan changes
+    await traceInput({
+      user: { connect: { username: operator } },
+      physicalQty: qtyNum,
+      office: loc,
+      sku,
+      rak: rakNum,
+    });
 
     await prisma.compareItem.upsert({
       where: {

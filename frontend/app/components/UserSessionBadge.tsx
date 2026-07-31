@@ -5,7 +5,7 @@ import { userSessionLabel } from "~/libs/user-access";
 import { useUserInfo } from "~/store";
 
 export function UserSessionBadge() {
-  const { userInfo } = useUserInfo();
+  const { userInfo, clearUserInfo } = useUserInfo();
   const navigate = useNavigate();
 
   if (!userInfo?.username) return null;
@@ -21,8 +21,14 @@ export function UserSessionBadge() {
       <button
         type="button"
         onClick={async () => {
-          await logout();
-          navigate("/login");
+          try {
+            await logout();
+          } catch (e) {
+            console.error("Logout request error:", e);
+          } finally {
+            clearUserInfo();
+            navigate("/login");
+          }
         }}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 text-[10px] font-bold tracking-wider border border-rose-200 shadow-sm transition-colors cursor-pointer"
         title="Logout"

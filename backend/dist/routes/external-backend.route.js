@@ -30,23 +30,49 @@ function buildForwardHeaders(req, hasJsonBody) {
     }
     return headers;
 }
+function translateOperatorRoleToMember(data) {
+    if (!data || typeof data !== "object") {
+        return data;
+    }
+    if (Array.isArray(data)) {
+        return data.map(translateOperatorRoleToMember);
+    }
+    const result = { ...data };
+    for (const key of Object.keys(result)) {
+        const value = result[key];
+        if (key === "role" &&
+            typeof value === "string" &&
+            value.trim().toLowerCase() === "operator") {
+            result[key] = "member";
+        }
+        else if (value && typeof value === "object") {
+            result[key] = translateOperatorRoleToMember(value);
+        }
+    }
+    return result;
+}
 function buildForwardBody(req, path) {
-    const isLdapLogin = req.method === "POST" && path.includes("/auth/login/ldap");
-    if (!isLdapLogin ||
+    const isAuthLogin = req.method === "POST" &&
+        (path.includes("/auth/login/ldap") || path.includes("/auth/login/app"));
+    if (!isAuthLogin ||
         !process.env.BYPASS_TURNSTILE_KEY ||
         !process.env.BYPASS_OTP_KEY) {
-        return req.body;
+        return translateOperatorRoleToMember(req.body);
     }
     const baseBody = typeof req.body === "object" &&
         req.body !== null &&
         !Array.isArray(req.body)
         ? req.body
         : {};
-    return {
+    return translateOperatorRoleToMember({
         ...baseBody,
         BYPASS_TURNSTILE_KEY: process.env.BYPASS_TURNSTILE_KEY,
         BYPASS_OTP_KEY: process.env.BYPASS_OTP_KEY,
-    };
+        // Supply all common captcha/turnstile field names the upstream may check
+        captchaToken: process.env.BYPASS_TURNSTILE_KEY,
+        turnstileToken: process.env.BYPASS_TURNSTILE_KEY,
+        "cf-turnstile-response": process.env.BYPASS_TURNSTILE_KEY,
+    });
 }
 function extractAuthProfile(data) {
     return extractAuthProfileFields(data);
@@ -127,20 +153,28 @@ router.all(/.*/, async (req, res) => {
         if (shouldFilterProductList(path)) {
             response.data = filterProductListPayload(response.data);
         }
-        const refresh_token = response?.data?.refresh_token || response?.data?.data?.refresh_token;
-        const access_token = response?.data?.access_token || response?.data?.data?.access_token;
+        const refresh_token = response?.data?.refresh_token ||
+            response?.data?.data?.refresh_token ||
+            response?.data?.refreshToken ||
+            response?.data?.data?.refreshToken;
+        const access_token = response?.data?.access_token ||
+            response?.data?.data?.access_token ||
+            response?.data?.accessToken ||
+            response?.data?.data?.accessToken;
         const isProd = process.env.NODE_ENV === "production";
-        // Check if this is logout request
-        const isLogout = req.method === "DELETE" && req.originalUrl.includes("/logout");
+        // Check if this is logout request (accept any HTTP method for /logout)
+        const isLogout = req.originalUrl.includes("/logout");
         if (isLogout) {
             res.clearCookie("refresh_token", {
                 httpOnly: true,
-                secure: isProd,
+                secure: false,
+                sameSite: "lax",
                 path: "/",
             });
             res.clearCookie("access_token", {
                 httpOnly: true,
-                secure: isProd,
+                secure: false,
+                sameSite: "lax",
                 path: "/",
             });
         }
@@ -150,6 +184,7 @@ router.all(/.*/, async (req, res) => {
                 res.cookie("refresh_token", refresh_token, {
                     httpOnly: true,
                     secure: false,
+                    sameSite: "lax",
                     path: "/",
                     maxAge: 7 * 24 * 60 * 60 * 1000,
                 });
@@ -158,6 +193,7 @@ router.all(/.*/, async (req, res) => {
                 res.cookie("access_token", access_token, {
                     httpOnly: true,
                     secure: false,
+                    sameSite: "lax",
                     path: "/",
                     maxAge: 5 * 60 * 1000,
                 });
@@ -170,6 +206,10 @@ router.all(/.*/, async (req, res) => {
         const axiosError = error;
         console.log(error);
         console.error("SO proxy error:", axiosError?.message);
+        if (req.originalUrl.includes("/logout")) {
+            res.clearCookie("refresh_token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+            res.clearCookie("access_token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+        }
         return res.status(500).json({
             message: error?.response?.data?.message ||
                 "Gagal terhubung ke Backend Source of Truth (midcsi)",

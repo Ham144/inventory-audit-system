@@ -5,6 +5,7 @@ export const noAuthOriginalUrl = [
     "/so/api/auth/login",
     "/so/api/auth/get",
     "/so/api/auth/verify/whatsapp",
+    "/so/api/auth/logout",
 ];
 const authenticate = (req, res, next) => {
     if (noAuthOriginalUrl.some((e) => req.originalUrl.startsWith(e))) {
