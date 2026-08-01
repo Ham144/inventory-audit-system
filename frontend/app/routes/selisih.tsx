@@ -441,11 +441,19 @@ export default function SelisihPage() {
                                 <option value="">
                                   — Belum didelegasikan —
                                 </option>
-                                {operatorUsers.map((u) => (
-                                  <option key={u.username} value={u.username}>
-                                    {u.username}
-                                  </option>
-                                ))}
+                                {operatorUsers
+                                  .filter(
+                                    (u) =>
+                                      !u.office ||
+                                      u.office.trim().toUpperCase() === "IT" ||
+                                      u.office.trim().toLowerCase() ===
+                                        row.office?.trim().toLowerCase(),
+                                  )
+                                  .map((u) => (
+                                    <option key={u.username} value={u.username}>
+                                      {u.username}
+                                    </option>
+                                  ))}
                               </select>
                               {rowExt.delegatedTo && (
                                 <span className="badge badge-xs badge-info font-bold gap-0.5">

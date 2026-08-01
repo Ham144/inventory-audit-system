@@ -29,12 +29,13 @@ import {
   clearStaleSystemApproval,
   type ScanQtyApprovalRow,
 } from "../utils/scan-approval.js";
-import { resolveStockQty, type StockResponse } from "../types/catalog.js";
+import { resolveStockQty, type InventoryResponse } from "../types/catalog.js";
 import {
   canAccessAdmin,
   resolveAppUser,
   resolveOfficeFilter,
 } from "../utils/app-user.js";
+import { findUserByUsername } from "../utils/user-store.js";
 
 const databaseCenter = () => process.env.DATABASE_CENTER as string;
 
@@ -104,8 +105,11 @@ async function fetchNavStockQty(
   req: Request,
 ): Promise<number> {
   const locationCode = await mapOfficeToLocation(office);
-  const response = await axios.get<StockResponse>(
-    `${databaseCenter()}/api/v1/product/getStock`,
+  const url = `${databaseCenter()}/api/v1/inventory/count`;
+  console.log(`[DEBUG fetchNavStockQty] Requesting: ${url} with params:`, { No: sku, locationCode });
+
+  const response = await axios.get<InventoryResponse>(
+    url,
     {
       params: { No: sku, locationCode },
       headers: {
@@ -114,6 +118,10 @@ async function fetchNavStockQty(
       validateStatus: () => true,
     },
   );
+
+  console.log(`[DEBUG fetchNavStockQty] Response Status: ${response.status}`);
+  console.log(`[DEBUG fetchNavStockQty] Response Data Type: ${typeof response.data}`);
+  console.log(`[DEBUG fetchNavStockQty] Response Data:`, response.data);
 
   if (response.status >= 400) {
     throw new Error(`getStock failed (${response.status})`);
@@ -917,6 +925,33 @@ router.patch(
 
       if (!item) {
         return res.status(404).json({ error: "Compare item tidak ditemukan" });
+      }
+
+      const targetUser = delegatedTo?.trim();
+      if (targetUser) {
+        const dbUser = await findUserByUsername(targetUser);
+        if (!dbUser) {
+          return res.status(400).json({ error: "User delegasi tidak ditemukan" });
+        }
+
+        const role = dbUser.role?.trim().toLowerCase();
+        if (role !== "operator" && role !== "admin") {
+          return res.status(400).json({
+            error: "Hanya user dengan role operator atau admin yang dapat didelegasikan",
+          });
+        }
+
+        const office = readOffice(item.session);
+        const userOffice = dbUser.office?.trim();
+        if (
+          userOffice &&
+          userOffice.toUpperCase() !== "IT" &&
+          userOffice !== office
+        ) {
+          return res.status(400).json({
+            error: `User delegasi harus berada di kantor yang sama (${office})`,
+          });
+        }
       }
 
       const approver = resolveApprover(req);

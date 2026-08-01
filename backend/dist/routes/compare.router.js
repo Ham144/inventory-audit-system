@@ -6,6 +6,7 @@ import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, 
 import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, clearStaleSystemApproval, } from "../utils/scan-approval.js";
 import { resolveStockQty } from "../types/catalog.js";
 import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
+import { findUserByUsername } from "../utils/user-store.js";
 const databaseCenter = () => process.env.DATABASE_CENTER;
 const SESSION_OFFICE_SELECT = { office: true };
 async function getOrCreateActiveSession(office) {
@@ -49,13 +50,18 @@ function resolveApprover(req) {
 }
 async function fetchNavStockQty(sku, office, req) {
     const locationCode = await mapOfficeToLocation(office);
-    const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock`, {
+    const url = `${databaseCenter()}/api/v1/inventory/count`;
+    console.log(`[DEBUG fetchNavStockQty] Requesting: ${url} with params:`, { No: sku, locationCode });
+    const response = await axios.get(url, {
         params: { No: sku, locationCode },
         headers: {
             cookie: req.headers.cookie ?? "",
         },
         validateStatus: () => true,
     });
+    console.log(`[DEBUG fetchNavStockQty] Response Status: ${response.status}`);
+    console.log(`[DEBUG fetchNavStockQty] Response Data Type: ${typeof response.data}`);
+    console.log(`[DEBUG fetchNavStockQty] Response Data:`, response.data);
     if (response.status >= 400) {
         throw new Error(`getStock failed (${response.status})`);
     }
@@ -620,6 +626,28 @@ router.patch("/nav/:compareItemId/delegate", async (req, res) => {
         });
         if (!item) {
             return res.status(404).json({ error: "Compare item tidak ditemukan" });
+        }
+        const targetUser = delegatedTo?.trim();
+        if (targetUser) {
+            const dbUser = await findUserByUsername(targetUser);
+            if (!dbUser) {
+                return res.status(400).json({ error: "User delegasi tidak ditemukan" });
+            }
+            const role = dbUser.role?.trim().toLowerCase();
+            if (role !== "operator" && role !== "admin") {
+                return res.status(400).json({
+                    error: "Hanya user dengan role operator atau admin yang dapat didelegasikan",
+                });
+            }
+            const office = readOffice(item.session);
+            const userOffice = dbUser.office?.trim();
+            if (userOffice &&
+                userOffice.toUpperCase() !== "IT" &&
+                userOffice !== office) {
+                return res.status(400).json({
+                    error: `User delegasi harus berada di kantor yang sama (${office})`,
+                });
+            }
         }
         const approver = resolveApprover(req);
         const updated = await prisma.compareItem.update({

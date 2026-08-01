@@ -22,3 +22,7 @@ fitur request 27/07/2026
 [x] add: fitur delegasi untuk pembenaran perbaikan sku di page cek selisih untuk menghindari koreksi double, ditetap kan oleh admin (penjelasan: fitur di cek selisih yang bisa di tetapkan oleh admin untuk bisa menunjuk orang yang melihat sku yang salah itu, sehingga role operator hanya melihat selisih yang telah dibebankan padanya)
 [x] mod: fitur default hari di page admin harusnya 1 hari terakhir bukan 7 hari terakhir
 [x] fix: user tipe app belum bisa login "Verifikasi CAPTCHA gagal."
+
+// 01/08/2026
+[x] check nav sudah diganti dari stock menjadi check inventory
+[x] akun opsi delegasi dibuat terbatas operator dan admin gudang saja 

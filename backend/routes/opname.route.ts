@@ -37,7 +37,7 @@ import {
   parseCatalogList,
   resolveStockQty,
   toCompareItemSeed,
-  type StockResponse,
+  type InventoryResponse,
 } from "../types/catalog.js";
 import {
   filterHiddenProducts,
@@ -674,8 +674,8 @@ router.post("/sync", async (req: Request, res: Response) => {
           loc = readOffice(itemSession ?? {});
         }
 
-        const response = await axios.get<StockResponse>(
-          `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
+        const response = await axios.get<InventoryResponse>(
+          `${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
         );
 
         const realQty = resolveStockQty(response.data);
@@ -802,8 +802,8 @@ export function startOpnameCron() {
             continue;
           }
           try {
-            const response = await axios.get<StockResponse>(
-              `${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`,
+            const response = await axios.get<InventoryResponse>(
+              `${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`,
             );
 
             const realQty = resolveStockQty(response.data);

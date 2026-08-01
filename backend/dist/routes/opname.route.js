@@ -524,7 +524,7 @@ router.post("/sync", async (req, res) => {
                     });
                     loc = readOffice(itemSession ?? {});
                 }
-                const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`);
+                const response = await axios.get(`${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`);
                 const realQty = resolveStockQty(response.data);
                 const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                 const updated = await prisma.compareItem.update({
@@ -627,7 +627,7 @@ export function startOpnameCron() {
                         continue;
                     }
                     try {
-                        const response = await axios.get(`${databaseCenter()}/api/v1/product/getStock?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`);
+                        const response = await axios.get(`${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`);
                         const realQty = resolveStockQty(response.data);
                         const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                         await prisma.compareItem.update({

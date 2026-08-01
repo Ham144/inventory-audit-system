@@ -7,12 +7,12 @@ const getHostname = () => {
 
 // 2. Deteksi environment berbasis hostname atau process.env
 export const NODE_ENV =
-  getHostname() === "192.168.169.12" || process.env.NODE_ENV === "development"
+  getHostname() === "localhost" || process.env.NODE_ENV === "development"
     ? "development"
     : "production";
 
 // 3. Tentukan BASE_URL
 export const BASE_URL =
   NODE_ENV === "development"
-    ? "http://192.168.169.12:3000"
+    ? "http://localhost:3000"
     : "http://192.168.169.26:3000";

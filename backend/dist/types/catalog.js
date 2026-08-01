@@ -10,13 +10,10 @@ export function parseCatalogList(payload) {
     return [];
 }
 export function resolveStockQty(payload) {
-    if (payload.stockResult !== undefined && payload.stockResult !== null) {
-        return Number(payload.stockResult);
+    if (payload.inventoryResult !== undefined && payload.inventoryResult !== null) {
+        return Number(payload.inventoryResult);
     }
-    if (payload.data?.stockResult !== undefined && payload.data.stockResult !== null) {
-        return Number(payload.data.stockResult);
-    }
-    return payload.quantity ?? payload.stock ?? payload.data?.quantity ?? 0;
+    return 0;
 }
 export function toCompareItemSeed(product, sessionId) {
     return {

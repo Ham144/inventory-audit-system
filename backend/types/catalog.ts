@@ -4,14 +4,8 @@ export interface CatalogProduct {
   Description_3?: string;
 }
 
-export interface StockResponse {
-  stockResult?: number;
-  quantity?: number;
-  stock?: number;
-  data?: {
-    quantity?: number;
-    stockResult?: number;
-  };
+export interface InventoryResponse {
+    inventoryResult?: number;
 }
 
 export function parseCatalogList(payload: unknown): CatalogProduct[] {
@@ -27,14 +21,11 @@ export function parseCatalogList(payload: unknown): CatalogProduct[] {
   return [];
 }
 
-export function resolveStockQty(payload: StockResponse): number {
-  if (payload.stockResult !== undefined && payload.stockResult !== null) {
-    return Number(payload.stockResult);
+export function resolveStockQty(payload: InventoryResponse): number {
+  if (payload.inventoryResult !== undefined && payload.inventoryResult !== null) {
+    return Number(payload.inventoryResult);
   }
-  if (payload.data?.stockResult !== undefined && payload.data.stockResult !== null) {
-    return Number(payload.data.stockResult);
-  }
-  return payload.quantity ?? payload.stock ?? payload.data?.quantity ?? 0;
+  return 0;
 }
 
 export function toCompareItemSeed(

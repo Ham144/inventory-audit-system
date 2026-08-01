@@ -72,7 +72,7 @@ export const CompareApi = {
   approveScanQty: async (scanLogId: string): Promise<ScanCompareRow | null> => {
     const response = await axiosInstance.post<ScanCompareRow | null>(
       "/api/compare/scan/approve",
-      { scanLogId },
+      { scanLogId }
     );
     return response.data;
   },
@@ -105,13 +105,14 @@ export const CompareApi = {
     return response.data;
   },
 
+  // main
   checkNavItem: async (compareItemId: string): Promise<NavCompareRow> => {
     const response = await axiosInstance.post<NavCompareRow>(
       `/api/compare/nav/${compareItemId}/check`,
     );
     return response.data;
   },
-
+  
   saveNavNote: async (
     compareItemId: string,
     note: string,
