@@ -2,7 +2,7 @@ import { findUserByUsername, isItDepartment } from "./user-store.js";
 import { readJwtUsername } from "./auth-profile.js";
 import { mapLocationToOffice } from "./office-mapping.js";
 
-export { readJwtUsername } from "./auth-profile.js";
+export { readJwtUsername, readJwtMongooseId } from "./auth-profile.js";
 
 export type AppUser = {
   username: string;
@@ -64,13 +64,10 @@ export function canScan(
 export async function resolveAppUser(req: {
   user?: JwtPayload;
 }): Promise<AppUser | null> {
-  console.log("DEBUG resolveAppUser: req.user =", req.user);
   const username = readUsername(req.user);
-  console.log("DEBUG resolveAppUser: username =", username);
   if (!username) return null;
 
   const dbUser = await findUserByUsername(username);
-  console.log("DEBUG resolveAppUser: dbUser =", dbUser);
   if (dbUser) {
     const rawOffice = dbUser.office?.trim() || null;
     const cleanOffice = isItDepartment(rawOffice) ? null : rawOffice;
@@ -79,7 +76,6 @@ export async function resolveAppUser(req: {
       role: dbUser.role ?? "operator",
       office: cleanOffice,
     };
-    console.log("DEBUG resolveAppUser: returning dbUser mapping =", res);
     return res;
   }
 

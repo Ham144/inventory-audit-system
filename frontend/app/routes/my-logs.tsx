@@ -21,7 +21,11 @@ import { DocsShell } from "~/components/DocsShell";
 import { useUserInfo } from "~/store";
 import { traceLogs } from "~/api/opname.api";
 import locationApi from "~/api/LocationApi";
-import { compareOfficeScope, adminCanPickOffice, userOffice } from "~/libs/user-access";
+import {
+  compareOfficeScope,
+  adminCanPickOffice,
+  userOffice,
+} from "~/libs/user-access";
 import {
   normalizeLocationList,
   resolveInitialPickedOffice,
@@ -63,8 +67,12 @@ function StatCard({
 }) {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl px-5 py-3 min-w-[100px]">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-      <p className={`text-xl font-black mt-0.5 ${accent ? "text-indigo-700" : "text-slate-900"}`}>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        {label}
+      </p>
+      <p
+        className={`text-xl font-black mt-0.5 ${accent ? "text-slate-700" : "text-slate-900"}`}
+      >
         {value}
       </p>
     </div>
@@ -99,7 +107,10 @@ export default function MyLogsPage() {
     queryKey: ["trace-logs", compareOffice, selectedRak, dateFrom, dateTo],
     queryFn: () =>
       traceLogs({
-        office: compareOffice && compareOffice !== "Semua" ? compareOffice : undefined,
+        office:
+          compareOffice && compareOffice !== "Semua"
+            ? compareOffice
+            : undefined,
         rak: selectedRak !== "Semua" ? selectedRak : undefined,
         startDate: dateFrom || undefined,
         endDate: dateTo || undefined,
@@ -130,7 +141,12 @@ export default function MyLogsPage() {
   }, [showOfficePicker]);
 
   useEffect(() => {
-    if (!showOfficePicker || locations.length === 0 || officeDefaultApplied.current) return;
+    if (
+      !showOfficePicker ||
+      locations.length === 0 ||
+      officeDefaultApplied.current
+    )
+      return;
     officeDefaultApplied.current = true;
     setPickedOffice(
       resolveInitialPickedOffice({
@@ -159,7 +175,8 @@ export default function MyLogsPage() {
     const username = userInfo?.username?.trim().toLowerCase();
 
     return data.filter((row) => {
-      if (!showOfficePicker && row.username?.trim().toLowerCase() !== username) return false;
+      if (!showOfficePicker && row.username?.trim().toLowerCase() !== username)
+        return false;
       if (search && !row.sku.toLowerCase().includes(search)) return false;
       return true;
     });
@@ -178,7 +195,10 @@ export default function MyLogsPage() {
   // Pagination calculations
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
-  const paginatedLogs = filteredLogs.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const paginatedLogs = filteredLogs.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize,
+  );
 
   const hasActiveFilters =
     searchTerm || selectedRak !== "Semua" || dateFrom || dateTo;
@@ -195,7 +215,7 @@ export default function MyLogsPage() {
   if (userInfo === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="loading loading-spinner loading-lg text-indigo-500" />
+        <span className="loading loading-spinner loading-lg text-slate-500" />
       </div>
     );
   }
@@ -206,7 +226,7 @@ export default function MyLogsPage() {
         {/* Back link */}
         <Link
           to="/input"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-600 transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Kembali ke input scan
@@ -215,7 +235,7 @@ export default function MyLogsPage() {
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-200">
+            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-slate-500 to-violet-500 text-white shadow-lg shadow-slate-200">
               <History className="h-6 w-6" />
             </div>
             <div>
@@ -233,10 +253,10 @@ export default function MyLogsPage() {
               onClick={() => scansQuery.refetch()}
               disabled={scansQuery.isFetching}
               title="Refresh data"
-              className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-indigo-600 hover:border-indigo-300 hover:shadow-sm transition-all"
+              className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-slate-600 hover:border-slate-300 hover:shadow-sm transition-all"
             >
               <RefreshCw
-                className={`h-4 w-4 ${scansQuery.isFetching ? "animate-spin text-indigo-500" : ""}`}
+                className={`h-4 w-4 ${scansQuery.isFetching ? "animate-spin text-slate-500" : ""}`}
               />
             </button>
           </div>
@@ -245,13 +265,14 @@ export default function MyLogsPage() {
         {/* Stat cards */}
         <div className="flex flex-wrap gap-3">
           <StatCard label="Total Baris" value={filteredLogs.length} />
-          <StatCard label="Total Qty Fisik" value={totalQty.toLocaleString("id-ID")} accent />
           <StatCard
-            label="Halaman"
-            value={`${safePage} / ${totalPages}`}
+            label="Total Qty Fisik"
+            value={totalQty.toLocaleString("id-ID")}
+            accent
           />
+          <StatCard label="Halaman" value={`${safePage} / ${totalPages}`} />
           {scansQuery.isFetching && !scansQuery.isLoading && (
-            <div className="flex items-center gap-2 text-xs text-indigo-500 font-semibold bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />
               Memperbarui...
             </div>
@@ -262,7 +283,7 @@ export default function MyLogsPage() {
         <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-              <BarChart3 className="h-3.5 w-3.5 text-indigo-500" />
+              <BarChart3 className="h-3.5 w-3.5 text-slate-500" />
               Filter Data
             </div>
             {hasActiveFilters && (
@@ -280,7 +301,7 @@ export default function MyLogsPage() {
             {/* Search */}
             <div className="flex flex-col gap-1.5 min-w-[180px] flex-1">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                <Search className="h-3 w-3 text-indigo-500" />
+                <Search className="h-3 w-3 text-slate-500" />
                 Cari SKU
               </label>
               <div className="relative">
@@ -290,7 +311,7 @@ export default function MyLogsPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Ketik SKU..."
-                  className="input input-bordered input-sm w-full pl-9 bg-slate-50 font-semibold focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                  className="input input-bordered input-sm w-full pl-9 bg-slate-50 font-semibold focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 />
               </div>
             </div>
@@ -299,14 +320,16 @@ export default function MyLogsPage() {
             {showOfficePicker && (
               <div className="flex flex-col gap-1.5 min-w-[175px]">
                 <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <MapPin className="h-3 w-3 text-indigo-500" />
+                  <MapPin className="h-3 w-3 text-slate-500" />
                   Wilayah
                 </label>
                 <select
                   value={pickedOffice}
                   onChange={(e) => {
                     setPickedOffice(e.target.value);
-                    setAdminDefaultOffice(e.target.value === "Semua" ? "" : e.target.value);
+                    setAdminDefaultOffice(
+                      e.target.value === "Semua" ? "" : e.target.value,
+                    );
                     setSelectedRak("Semua");
                   }}
                   disabled={isLoadingLocations}
@@ -331,7 +354,7 @@ export default function MyLogsPage() {
             {/* Rak filter */}
             <div className="flex flex-col gap-1.5 min-w-[110px]">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                <Hash className="h-3 w-3 text-indigo-500" />
+                <Hash className="h-3 w-3 text-slate-500" />
                 Rak
               </label>
               <select
@@ -351,7 +374,7 @@ export default function MyLogsPage() {
             {/* Date from */}
             <div className="flex flex-col gap-1.5 min-w-[135px]">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                <Calendar className="h-3 w-3 text-indigo-500" />
+                <Calendar className="h-3 w-3 text-slate-500" />
                 Dari
               </label>
               <input
@@ -366,7 +389,7 @@ export default function MyLogsPage() {
             {/* Date to */}
             <div className="flex flex-col gap-1.5 min-w-[135px]">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                <Calendar className="h-3 w-3 text-indigo-500" />
+                <Calendar className="h-3 w-3 text-slate-500" />
                 Sampai
               </label>
               <input
@@ -385,14 +408,16 @@ export default function MyLogsPage() {
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
           {scansQuery.isLoading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
-              <span className="loading loading-spinner loading-lg text-indigo-500" />
+              <span className="loading loading-spinner loading-lg text-slate-500" />
               <p className="text-sm font-semibold">Memuat riwayat scan...</p>
             </div>
           ) : scansQuery.isError ? (
             <div className="p-10 text-center">
               <div className="text-4xl mb-3">⚠️</div>
               <p className="font-bold text-slate-700">Gagal memuat data</p>
-              <p className="text-sm text-slate-400 mt-1 mb-4">Terjadi kesalahan saat mengambil riwayat scan.</p>
+              <p className="text-sm text-slate-400 mt-1 mb-4">
+                Terjadi kesalahan saat mengambil riwayat scan.
+              </p>
               <button
                 onClick={() => scansQuery.refetch()}
                 className="btn btn-sm btn-outline btn-error"
@@ -405,14 +430,19 @@ export default function MyLogsPage() {
               <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Package className="h-8 w-8 text-slate-400" />
               </div>
-              <p className="font-bold text-slate-700 text-base">Belum ada riwayat</p>
+              <p className="font-bold text-slate-700 text-base">
+                Belum ada riwayat
+              </p>
               <p className="text-sm text-slate-400 mt-1.5">
                 {hasActiveFilters
                   ? "Tidak ada data yang cocok dengan filter aktif."
                   : "Scan barang di halaman input untuk melihat data di sini."}
               </p>
               {hasActiveFilters && (
-                <button onClick={clearFilters} className="btn btn-sm btn-ghost mt-4 text-indigo-600">
+                <button
+                  onClick={clearFilters}
+                  className="btn btn-sm btn-ghost mt-4 text-slate-600"
+                >
                   Reset filter
                 </button>
               )}
@@ -429,14 +459,16 @@ export default function MyLogsPage() {
                       <th className="font-bold py-3 text-center">Rak</th>
                       <th className="font-bold py-3 text-right">Qty Fisik</th>
                       <th className="font-bold py-3">Kantor</th>
-                      {showOfficePicker && <th className="font-bold py-3">Operator</th>}
+                      {showOfficePicker && (
+                        <th className="font-bold py-3">Operator</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {paginatedLogs.map((row, i) => (
                       <tr
                         key={row.id}
-                        className="hover:bg-indigo-50/40 transition-colors group"
+                        className="hover:bg-slate-50/40 transition-colors group"
                       >
                         <td className="pl-5 pr-2 text-slate-400 text-xs font-mono">
                           {(safePage - 1) * pageSize + i + 1}
@@ -445,7 +477,7 @@ export default function MyLogsPage() {
                           {formatDateTime(row.createdat)}
                         </td>
                         <td className="py-3">
-                          <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-lg text-xs group-hover:bg-indigo-100 transition-colors">
+                          <span className="font-mono font-bold text-slate-700 bg-slate-50 px-2 py-0.5 rounded-lg text-xs group-hover:bg-slate-100 transition-colors">
                             {row.sku}
                           </span>
                         </td>
@@ -502,7 +534,10 @@ export default function MyLogsPage() {
                       {(safePage - 1) * pageSize + 1}–
                       {Math.min(safePage * pageSize, filteredLogs.length)}
                     </strong>{" "}
-                    dari <strong className="text-slate-700">{filteredLogs.length}</strong>
+                    dari{" "}
+                    <strong className="text-slate-700">
+                      {filteredLogs.length}
+                    </strong>
                   </span>
                 </div>
 
@@ -551,7 +586,9 @@ export default function MyLogsPage() {
                   })}
 
                   <button
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
                     disabled={safePage === totalPages}
                     className="btn btn-xs btn-ghost btn-square disabled:opacity-30"
                   >

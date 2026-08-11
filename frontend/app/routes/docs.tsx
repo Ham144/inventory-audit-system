@@ -230,9 +230,7 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
           </li>
         </ol>
 
-        <p className="font-semibold text-slate-800 mt-4">
-          Filter tanggal scan
-        </p>
+        <p className="font-semibold text-slate-800 mt-4">Filter tanggal scan</p>
         <ul className="list-disc pl-5 space-y-2">
           <li>
             Input <strong>Dari</strong> / <strong>Sampai</strong> memfilter
@@ -294,8 +292,8 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
               CompareItem
             </code>{" "}
             punya field opsional{" "}
-            <code className="text-xs bg-slate-100 px-1 rounded">note</code> (satu
-            teks per SKU, bukan array)
+            <code className="text-xs bg-slate-100 px-1 rounded">note</code>{" "}
+            (satu teks per SKU, bukan array)
           </li>
           <li>
             Tombol <strong>Note</strong> di kolom Catatan → modal textarea →
@@ -304,10 +302,14 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
               PATCH /api/compare/nav/:compareItemId/note
             </code>
           </li>
-          <li>Catatan ikut diekspor ke kolom <strong>Catatan</strong> di CSV</li>
+          <li>
+            Catatan ikut diekspor ke kolom <strong>Catatan</strong> di CSV
+          </li>
         </ul>
 
-        <p className="font-semibold text-slate-800 mt-4">Filter &amp; lainnya</p>
+        <p className="font-semibold text-slate-800 mt-4">
+          Filter &amp; lainnya
+        </p>
         <ul className="list-disc pl-5 space-y-2">
           <li>
             <strong>Kolom Fisik (NAV)</strong> ={" "}
@@ -317,8 +319,8 @@ Backend JWT      →  autentikasi request API opname/compare`}</CodeBlock>
             semua rak resolved per SKU + office
           </li>
           <li>
-            Filter tambahan: wilayah, rak, search SKU/nama, status NAV
-            (pending / selisih / sesuai), sort
+            Filter tambahan: wilayah, rak, search SKU/nama, status NAV (pending
+            / selisih / sesuai), sort
           </li>
           <li>Tombol Perbarui — refresh data compare scan</li>
           <li>Auto-expand baris yang masih pending approval</li>
@@ -346,7 +348,7 @@ Hasil: dibandingkan | dilewati_pending_rak | gagal`}</CodeBlock>
             <div className="flex items-center gap-2 mb-2">
               <Link
                 to="/input"
-                className="font-mono font-bold text-indigo-700 hover:underline"
+                className="font-mono font-bold text-slate-700 hover:underline"
               >
                 /input
               </Link>
@@ -367,7 +369,7 @@ Hasil: dibandingkan | dilewati_pending_rak | gagal`}</CodeBlock>
             <div className="flex items-center gap-2 mb-2">
               <Link
                 to="/admin"
-                className="font-mono font-bold text-indigo-700 hover:underline"
+                className="font-mono font-bold text-slate-700 hover:underline"
               >
                 /admin
               </Link>
@@ -407,7 +409,7 @@ Hasil: dibandingkan | dilewati_pending_rak | gagal`}</CodeBlock>
             <div className="flex items-center gap-2 mb-2">
               <Link
                 to="/settings"
-                className="font-mono font-bold text-indigo-700 hover:underline"
+                className="font-mono font-bold text-slate-700 hover:underline"
               >
                 /settings
               </Link>
@@ -420,12 +422,12 @@ Hasil: dibandingkan | dilewati_pending_rak | gagal`}</CodeBlock>
               <li>Manajemen role user (owner)</li>
             </ul>
           </div>
-                  
+
           <div className="bg-white border border-slate-200 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-2">
               <Link
                 to="/my-logs"
-                className="font-mono font-bold text-indigo-700 hover:underline"
+                className="font-mono font-bold text-slate-700 hover:underline"
               >
                 /my-logs
               </Link>

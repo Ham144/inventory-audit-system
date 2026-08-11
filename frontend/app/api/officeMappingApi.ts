@@ -1,3 +1,4 @@
+import { useState } from "react";
 import axiosInstance from "./axios-instance";
 
 export type OfficeMappingRecord = {
@@ -9,15 +10,19 @@ export type OfficeMappingRecord = {
 };
 
 export async function listOfficeMappings() {
-  const response = await axiosInstance.get<OfficeMappingRecord[]>("/api/mappings");
-  return response.data;
+  const response =
+    await axiosInstance.get("/api/mappings");
+  return response?.data;
 }
 
 export async function createOfficeMapping(payload: {
   officeName: string;
   locationCode: string;
 }) {
-  const response = await axiosInstance.post<OfficeMappingRecord>("/api/mappings", payload);
+  const response = await axiosInstance.post<OfficeMappingRecord>(
+    "/api/mappings",
+    payload,
+  );
   return response.data;
 }
 
@@ -36,8 +41,9 @@ export async function updateOfficeMapping(
 }
 
 export async function deleteOfficeMapping(id: string) {
-  const response = await axiosInstance.delete<{ success: boolean; message: string }>(
-    `/api/mappings/${encodeURIComponent(id)}`,
-  );
+  const response = await axiosInstance.delete<{
+    success: boolean;
+    message: string;
+  }>(`/api/mappings/${encodeURIComponent(id)}`);
   return response.data;
 }

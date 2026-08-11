@@ -2,6 +2,7 @@ import axiosInstance from "./axios-instance";
 import type { AppRole } from "~/libs/user-access";
 
 export type AppUserRecord = {
+  mongooseId: string;
   username: string;
   role: string | null;
   office: string | null;
@@ -40,7 +41,10 @@ export async function updateAppUserRole(username: string, role: AppRole) {
   return response.data;
 }
 
-export async function updateAppUserOffice(username: string, office: string | null) {
+export async function updateAppUserOffice(
+  username: string,
+  office: string | null,
+) {
   const response = await axiosInstance.patch<AppUserRecord>(
     `/api/opname/users/${encodeURIComponent(username)}/office`,
     { office },
@@ -49,9 +53,10 @@ export async function updateAppUserOffice(username: string, office: string | nul
 }
 
 export async function deleteAppUserFromOpname(username: string) {
-  const response = await axiosInstance.delete<{ success: boolean; message: string }>(
-    `/api/opname/users/${encodeURIComponent(username)}`,
-  );
+  const response = await axiosInstance.delete<{
+    success: boolean;
+    message: string;
+  }>(`/api/opname/users/${encodeURIComponent(username)}`);
   return response.data;
 }
 
@@ -59,6 +64,7 @@ export async function syncNonAdAppUser(payload: {
   username: string;
   role?: string;
   office?: string | null;
+  mongooseId?: string | null;
 }) {
   const response = await axiosInstance.post<AppUserRecord>(
     "/api/opname/users/sync-non-ad",

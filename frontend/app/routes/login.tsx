@@ -112,20 +112,20 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-center items-center font-sans relative px-4 overflow-hidden selection:bg-indigo-100">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-center items-center font-sans relative px-4 overflow-hidden selection:bg-slate-100">
       {/* Background elegant pattern */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_40%,#000_70%,transparent_100%)] pointer-events-none opacity-30 z-0" />
 
       {/* Decorative colored glow spheres */}
-      <div className="absolute top-1/4 left-1/4 h-72 w-72 bg-indigo-200 rounded-full blur-3xl opacity-30 pointer-events-none z-0" />
+      <div className="absolute top-1/4 left-1/4 h-72 w-72 bg-slate-200 rounded-full blur-3xl opacity-30 pointer-events-none z-0" />
       <div className="absolute bottom-1/4 right-1/4 h-72 w-72 bg-violet-200 rounded-full blur-3xl opacity-30 pointer-events-none z-0" />
 
       {/* Card container */}
-      <div className="relative z-10 w-full max-w-[420px] bg-white border border-slate-200 rounded-[32px] p-8 shadow-xl shadow-slate-100/50 backdrop-blur-md">
+      <div className="relative w-96 bg-white border border-slate-200  p-8 shadow-xl shadow-slate-100/50 backdrop-blur-md">
         {/* Brand logo header */}
         <div className="flex flex-col items-center text-center mb-8">
-          <div className="p-3.5 bg-linear-to-tr from-indigo-500 to-violet-500 rounded-2xl shadow-lg shadow-indigo-500/10 ring-1 ring-white/20 mb-3.5">
-            <Layers className="h-6 w-6 text-white" />
+          <div className="p-3.5 bg-linear-to-tr  rounded-2xl shadow-lg shadow-slate-500/10 ring-1 ring-white/20 mb-3.5">
+            <img width={60} height={60} src="/logo.png" />
           </div>
           <h1 className="text-xl font-black tracking-tight text-slate-900">
             Stok Opname CSI
@@ -151,7 +151,7 @@ export default function Login() {
               onClick={() => setLoginType("ldap")}
               className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
                 loginType === "ldap"
-                  ? "bg-white text-indigo-650 shadow-sm"
+                  ? "bg-white text-slate-650 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -163,7 +163,7 @@ export default function Login() {
               onClick={() => setLoginType("app")}
               className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
                 loginType === "app"
-                  ? "bg-white text-indigo-650 shadow-sm"
+                  ? "bg-white text-slate-650 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -175,17 +175,23 @@ export default function Login() {
           {/* Username Input */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-              {loginType === "ldap" ? "Username LDAP / Email" : "Username App / Local Account"}
+              {loginType === "ldap"
+                ? "Username LDAP / Email"
+                : "Username App / Local Account"}
             </label>
             <div className="relative">
               <User className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-slate-400 pointer-events-none" />
               <input
                 type="text"
-                placeholder={loginType === "ldap" ? "Masukkan username atau email..." : "Masukkan username..."}
+                placeholder={
+                  loginType === "ldap"
+                    ? "Masukkan username atau email..."
+                    : "Masukkan username..."
+                }
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={isLoading}
-                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-11 pr-4 py-3.5 outline-none transition-all duration-150"
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-11 pr-4 py-3.5 outline-none transition-all duration-150"
               />
             </div>
           </div>
@@ -203,7 +209,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
-                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-11 pr-4 py-3.5 outline-none transition-all duration-150"
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-11 pr-4 py-3.5 outline-none transition-all duration-150"
               />
             </div>
           </div>
@@ -212,7 +218,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full mt-2 py-3.5 bg-linear-to-r from-indigo-500 to-indigo-650 hover:from-indigo-450 hover:to-indigo-600 text-white text-xs font-bold rounded-2xl shadow-lg shadow-indigo-500/10 transition-all duration-150 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
+            className="w-full mt-2 py-3.5 bg-linear-to-r bg-black text-white text-xs font-bold rounded-2xl shadow-lg shadow-slate-500/10 transition-all duration-150 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
           >
             {isLoading ? (
               <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -228,7 +234,7 @@ export default function Login() {
 
       {/* Footer copyright */}
       <footer className="relative z-10 mt-8 flex items-center gap-1 text-[10px] text-slate-400 font-medium">
-        <Sparkles className="h-3 w-3 text-indigo-400 animate-pulse" />
+        <Sparkles className="h-3 w-3 text-slate-400 animate-pulse" />
         <span>Catur Sukses Internasional. Security Verified.</span>
       </footer>
     </div>

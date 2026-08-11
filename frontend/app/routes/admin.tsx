@@ -22,7 +22,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { redirect, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import axiosInstance from "../api/axios-instance";
 import locationApi from "../api/LocationApi";
 import { useUserInfo } from "../store";
@@ -126,11 +126,7 @@ interface ProductCompare {
 }
 
 type NavStatusFilter =
-  | "all"
-  | "pending_rak"
-  | "selisih"
-  | "sesuai"
-  | "belum_compare";
+  "all" | "pending_rak" | "selisih" | "sesuai" | "belum_compare";
 
 type SortBy = "default" | "name_asc" | "selisih_desc" | "pending_desc";
 
@@ -558,7 +554,7 @@ function NavCompareItem({
         <div className="flex items-start gap-2">
           <button
             type="button"
-            className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
+            className="mt-0.5 shrink-0 text-slate-400 hover:text-slate-600 transition-colors"
             onClick={onToggleExpand}
             aria-label={isExpanded ? "Tutup rincian" : "Buka rincian"}
           >
@@ -575,7 +571,7 @@ function NavCompareItem({
             <p className="text-[10px] font-mono text-slate-500 mt-0.5">
               {nav.sku}
             </p>
-            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-mono mt-1.5 inline-block">
+            <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 font-mono mt-1.5 inline-block">
               {nav.office}
             </span>
             {nav.note?.trim() && (
@@ -686,7 +682,7 @@ function NavCompareItem({
         <div className="col-span-3 pr-2 flex items-start gap-2">
           <button
             type="button"
-            className="mt-0.5 shrink-0 text-slate-400 hover:text-indigo-600 transition-colors"
+            className="mt-0.5 shrink-0 text-slate-400 hover:text-slate-600 transition-colors"
             onClick={onToggleExpand}
             aria-label={isExpanded ? "Tutup rincian" : "Buka rincian"}
           >
@@ -701,7 +697,7 @@ function NavCompareItem({
             <p className="text-[10px] font-mono text-slate-500 mt-0.5">
               {nav.sku}
             </p>
-            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 font-mono mt-1 inline-block">
+            <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 font-mono mt-1 inline-block">
               {nav.office}
             </span>
             {nav.note?.trim() && (
@@ -768,7 +764,7 @@ function NavCompareItem({
           </button>
         </div>
       </div>
-            
+
       {isExpanded && (
         <NavRowExpandedPanel
           rakDetails={rakDetails}
@@ -864,7 +860,7 @@ function RakDetailRow({
     >
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+          <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
             Rak {item.rak}
           </span>
           <ScanStatusBadge row={item} />
@@ -1670,13 +1666,13 @@ export default function AdminPage() {
   if (userInfo === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="loading loading-spinner loading-lg text-indigo-500" />
+        <span className="loading loading-spinner loading-lg text-slate-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-slate-100 selection:text-slate-900">
       {/* Subtle Dot Grid Background */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-40 z-0" />
 
@@ -1685,14 +1681,14 @@ export default function AdminPage() {
           ========================================== */}
       <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl sticky top-0 z-30 px-3 sm:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm shadow-slate-100/50">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-linear-to-tr from-indigo-500 to-violet-500 rounded-2xl shadow-md shadow-indigo-500/10 ring-1 ring-white">
-            <Layers className="h-6 w-6 text-white animate-pulse" />
+          <div className="p-1 rounded-md bg-linear-to-tr from-slate-500  shadow-slate-500/10 ring-1 ring-white">
+            <img src="/logo.png" alt="logo" width={40} height={40} />
           </div>
           <div>
             <h1 className="text-xl font-extrabold tracking-tight  flex items-center gap-2">
               Stok Opname{" "}
               <h4 className="text-base">
-                <span className="badge badge-sm bg-indigo-500 text-white">
+                <span className="badge badge-sm bg-slate-500 text-white">
                   BETA
                 </span>
               </h4>
@@ -1728,7 +1724,7 @@ export default function AdminPage() {
                 ? "bg-white border-emerald-200/80 text-emerald-955 shadow-emerald-500/5"
                 : toast.type === "warning"
                   ? "bg-white border-red-200/80 text-red-955 shadow-red-500/5"
-                  : "bg-white border-indigo-200/80 text-indigo-955 shadow-indigo-500/5"
+                  : "bg-white border-slate-200/80 text-slate-955 shadow-slate-500/5"
             }`}
           >
             <div
@@ -1737,7 +1733,7 @@ export default function AdminPage() {
                   ? "bg-emerald-50 text-emerald-500"
                   : toast.type === "warning"
                     ? "bg-red-50 text-red-500"
-                    : "bg-indigo-50 text-indigo-500"
+                    : "bg-slate-50 text-slate-500"
               }`}
             >
               {toast.type === "success" ? (
@@ -1759,7 +1755,7 @@ export default function AdminPage() {
       <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Metric 1 */}
         <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
-          <div className="absolute top-0 right-0 h-16 w-16 bg-indigo-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
+          <div className="absolute top-0 right-0 h-16 w-16 bg-slate-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
               Total SKU / Lokasi
@@ -1769,7 +1765,7 @@ export default function AdminPage() {
               <span className="text-xs font-medium text-slate-400">item</span>
             </span>
           </div>
-          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100">
+          <div className="p-3 bg-slate-50 text-slate-600 rounded-2xl border border-slate-100">
             <Boxes className="h-5 w-5" />
           </div>
         </div>
@@ -1835,7 +1831,7 @@ export default function AdminPage() {
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3 sm:gap-4">
             <div className="flex flex-col gap-1.5 w-full sm:min-w-45 sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <MapPin className="h-3 w-3 text-indigo-500" />
+                <MapPin className="h-3 w-3 text-slate-500" />
                 Wilayah / Gudang
               </label>
               {showOfficePicker ? (
@@ -1874,7 +1870,7 @@ export default function AdminPage() {
 
             <div className="flex flex-col gap-1.5 w-full sm:min-w-35 sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <SlidersHorizontal className="h-3 w-3 text-indigo-500" />
+                <SlidersHorizontal className="h-3 w-3 text-slate-500" />
                 Nomor Rak
               </label>
               <select
@@ -1893,7 +1889,7 @@ export default function AdminPage() {
 
             <div className="flex flex-col gap-1.5 w-full sm:flex-1 sm:min-w-50">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Search className="h-3 w-3 text-indigo-500" />
+                <Search className="h-3 w-3 text-slate-500" />
                 Cari SKU / Nama
               </label>
               <div className="relative">
@@ -1920,7 +1916,7 @@ export default function AdminPage() {
 
             <div className="flex flex-col gap-1.5 w-full sm:w-auto">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Calendar className="h-3 w-3 text-indigo-500" />
+                <Calendar className="h-3 w-3 text-slate-500" />
                 Tanggal Scan
               </label>
               <div className="flex items-center gap-2">
@@ -2020,7 +2016,7 @@ export default function AdminPage() {
                 operator di rincian rak.
               </p>
               {isDateRangeValid && (
-                <p className="text-[10px] text-indigo-600 font-bold mt-1">
+                <p className="text-[10px] text-slate-600 font-bold mt-1">
                   Scan {dateFrom} s/d {dateTo} · {filteredNavRows.length} SKU
                   {hasActiveFilters &&
                   navCompareRows.length > filteredNavRows.length
@@ -2080,7 +2076,7 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                className="btn btn-primary btn-sm gap-1.5"
+                className="btn bg-slate-400 btn-sm gap-1.5"
                 onClick={() => refreshScanCompare()}
                 disabled={scanCompareQuery.isFetching}
               >
@@ -2258,7 +2254,7 @@ export default function AdminPage() {
       <footer className="relative z-10 border-t border-slate-200/80 bg-white/40 px-6 py-4 flex items-center justify-between text-xs text-black font-medium mt-auto">
         <p>&copy; 2026 CSI Stok Opname System. All rights reserved.</p>
         <p className="flex items-center gap-1">
-          <Sparkles className="h-3.5 w-3.5 text-indigo-500 animate-pulse" />
+          <Sparkles className="h-3.5 w-3.5 text-slate-500 animate-pulse" />
           Designed with Premium Performance
         </p>
       </footer>

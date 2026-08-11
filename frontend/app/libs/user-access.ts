@@ -76,7 +76,7 @@ export function userSessionLabel(user: UserInfo | null | undefined): string {
     user?.name?.trim() ||
     "";
   const role = userRole(user);
-  if (role === "owner") return `Owner: ${name}`;
-  if (role === "admin") return `Admin: ${name}`;
-  return `Opr: ${name}`;
+  if (role === "owner") return `${name}: (sebagai Owner)`;
+  if (role === "admin") return ` ${name}: (sebagai Admin)`;
+  return `${name}: (sebagai operator)`;
 }

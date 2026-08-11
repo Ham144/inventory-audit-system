@@ -21,8 +21,13 @@ fitur request 27/07/2026
 [x] fix: fitur final correction untuk menetapkan total akhir tanpa logika rak (penjelasan: diantara semua resolved yang ternyata salah, ada 1 rak yang bisa ditetapkan sebagai hasil akhir tanpa memperdulikan hasil resolved lain)
 [x] add: fitur delegasi untuk pembenaran perbaikan sku di page cek selisih untuk menghindari koreksi double, ditetap kan oleh admin (penjelasan: fitur di cek selisih yang bisa di tetapkan oleh admin untuk bisa menunjuk orang yang melihat sku yang salah itu, sehingga role operator hanya melihat selisih yang telah dibebankan padanya)
 [x] mod: fitur default hari di page admin harusnya 1 hari terakhir bukan 7 hari terakhir
-[x] fix: user tipe app belum bisa login "Verifikasi CAPTCHA gagal."
 
 // 01/08/2026
+[x] akun opsi delegasi dibuat terbatas operator Gudang saja dalam 1 WL/office
+[x] Master SKU diambil dari Product Group Code = WL
 [x] check nav sudah diganti dari stock menjadi check inventory
-[x] akun opsi delegasi dibuat terbatas operator dan admin gudang saja 
+
+[x] delete and create user app sudah bagus
+[x] mencegah perubahan input mendatang jika sudah di cek sesuai dengan nav ("sku untuk warehouse ini sudah sesuai di sesuai dengan nav")
+[x] settings: admin bisa bantu mapping location jika ada ketidak sesuaian keyword 
+[x] sudah bisa login dengan app

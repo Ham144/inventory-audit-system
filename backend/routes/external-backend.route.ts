@@ -260,8 +260,18 @@ router.all(/.*/, async (req, res) => {
     console.error("SO proxy error:", axiosError?.message);
 
     if (req.originalUrl.includes("/logout")) {
-      res.clearCookie("refresh_token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
-      res.clearCookie("access_token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+      res.clearCookie("refresh_token", {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        path: "/",
+      });
+      res.clearCookie("access_token", {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        path: "/",
+      });
     }
 
     return res.status(500).json({

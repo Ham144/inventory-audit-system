@@ -118,9 +118,9 @@ export const resetPassword = async (body: any) => {
   return res.data;
 };
 
-export const deleteAppUser = async (id: string | number) => {
+export const deleteAppUser = async (_id: string | number) => {
   const response = await axiosInstance.delete(
-    `/so/api/auth/deleteAppUser/${id}`,
+    `/so/api/auth/deleteAppUser/${_id}`,
   );
   return response.data;
 };

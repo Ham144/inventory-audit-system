@@ -88,6 +88,7 @@ model CompareItem {
 
 model User {
   username  String   @id
+  mongooseId String? 
   role      String   @default("operator") // operator, admin, owner
   office    String?
   type      String   @default("external") // external (LDAP) or app (Non-AD)

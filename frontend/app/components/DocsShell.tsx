@@ -42,11 +42,11 @@ export function DocsShell({
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-4">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="p-2 rounded-xl bg-indigo-500 text-white shadow-sm">
+            <div className="p-2 rounded-xl bg-slate-500 text-white shadow-sm">
               <Layers className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">
+              <p className="text-sm font-bold text-slate-900 group-hover:text-slate-700 transition-colors">
                 {title}
               </p>
               <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
@@ -89,7 +89,7 @@ export function DocsShell({
                     <li key={s.id}>
                       <a
                         href={`#${s.id}`}
-                        className="text-xs font-semibold text-slate-600 hover:text-indigo-600 block py-1.5 px-2 rounded-lg hover:bg-indigo-50 transition-colors"
+                        className="text-xs font-semibold text-slate-600 hover:text-slate-600 block py-1.5 px-2 rounded-lg hover:bg-slate-50 transition-colors"
                       >
                         {s.label}
                       </a>
@@ -107,7 +107,7 @@ export function DocsShell({
                     <li key={m.path}>
                       <Link
                         to={m.path}
-                        className="text-xs font-semibold text-slate-600 hover:text-indigo-600 block py-1.5 px-2 rounded-lg hover:bg-slate-100 transition-colors"
+                        className="text-xs font-semibold text-slate-600 hover:text-slate-600 block py-1.5 px-2 rounded-lg hover:bg-slate-100 transition-colors"
                       >
                         <span className="font-mono">{m.label}</span>
                         <span className="text-slate-400 font-normal ml-1">
@@ -128,17 +128,11 @@ export function DocsShell({
   );
 }
 
-export function StatusBadge({
-  status,
-}: {
-  status: "implemented" | "planned";
-}) {
+export function StatusBadge({ status }: { status: "implemented" | "planned" }) {
   return (
     <span
       className={`badge badge-sm font-bold ${
-        status === "implemented"
-          ? "badge-success"
-          : "badge-warning"
+        status === "implemented" ? "badge-success" : "badge-warning"
       }`}
     >
       {status === "implemented" ? "Implemented" : "Planned"}

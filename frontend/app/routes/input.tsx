@@ -297,8 +297,13 @@ export default function Scan() {
           );
         }
       }
-    } catch {
-      showToast("Gagal menyimpan data scan ke server", "error");
+    } catch (err: any) {
+      const errorMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "Gagal menyimpan data scan ke server";
+      showToast(errorMsg, "error");
     } finally {
       setIsSaving(false);
       setRescanConfirm(null);
@@ -353,13 +358,13 @@ export default function Scan() {
   if (userInfo === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="loading loading-spinner loading-lg text-indigo-500" />
+        <span className="loading loading-spinner loading-lg text-slate-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans relative selection:bg-indigo-100">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans relative selection:bg-slate-100">
       {/* Background decoration */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-30 z-0" />
 
@@ -417,7 +422,7 @@ export default function Scan() {
                 ? "bg-emerald-50 border-emerald-200 text-emerald-800"
                 : toast.type === "error"
                   ? "bg-rose-50 border-rose-200 text-rose-800"
-                  : "bg-indigo-50 border-indigo-200 text-indigo-800"
+                  : "bg-slate-50 border-slate-200 text-slate-800"
             }`}
           >
             {toast.type === "success" ? (
@@ -431,7 +436,7 @@ export default function Scan() {
 
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
           <h2 className="text-sm font-extrabold tracking-wide text-slate-900 mb-6 uppercase flex items-center gap-2">
-            <FileText className="h-4 w-4 text-indigo-500" />
+            <FileText className="h-4 w-4 text-slate-500" />
             Formulir Input Barang
           </h2>
 
@@ -447,7 +452,7 @@ export default function Scan() {
                     value={pickedOffice}
                     onChange={(e) => setPickedOffice(e.target.value)}
                     disabled={isLoadingLocations}
-                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-bold text-slate-800 rounded-2xl pl-10 pr-4 py-3.5 appearance-none cursor-pointer outline-none transition-all duration-150"
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-bold text-slate-800 rounded-2xl pl-10 pr-4 py-3.5 appearance-none cursor-pointer outline-none transition-all duration-150"
                   >
                     {isLoadingLocations ? (
                       <option value="">Memuat wilayah...</option>
@@ -479,8 +484,8 @@ export default function Scan() {
                   Wilayah / Lokasi
                 </label>
                 <div className="relative">
-                  <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-indigo-500 pointer-events-none" />
-                  <div className="w-full bg-indigo-50/60 border border-indigo-100 text-xs font-bold text-indigo-900 rounded-2xl pl-10 pr-4 py-3.5">
+                  <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500 pointer-events-none" />
+                  <div className="w-full bg-slate-50/60 border border-slate-100 text-xs font-bold text-slate-900 rounded-2xl pl-10 pr-4 py-3.5">
                     {activeScanOffice}
                   </div>
                 </div>
@@ -505,7 +510,7 @@ export default function Scan() {
                       setSearchQuery(e.target.value);
                       if (selectedProduct) setSelectedProduct(null);
                     }}
-                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                   />
                   {searchQuery && (
                     <button
@@ -554,7 +559,7 @@ export default function Scan() {
                               SKU: {p.No || p.sku}
                             </span>
                           </div>
-                          <Hash className="h-3.5 w-3.5 text-indigo-500 shrink-0 opacity-60" />
+                          <Hash className="h-3.5 w-3.5 text-slate-500 shrink-0 opacity-60" />
                         </button>
                       ))
                     )}
@@ -563,18 +568,18 @@ export default function Scan() {
 
                 {/* Selected product banner */}
                 {selectedProduct && (
-                  <div className="p-3 rounded-2xl bg-indigo-50/50 border border-indigo-150/80 flex items-center justify-between">
+                  <div className="p-3 rounded-2xl bg-slate-50/50 border border-slate-150/80 flex items-center justify-between">
                     <div className="text-xs">
-                      <p className="font-extrabold text-indigo-950 line-clamp-1">
+                      <p className="font-extrabold text-slate-950 line-clamp-1">
                         {selectedProduct.Description ||
                           selectedProduct.Description_3 ||
                           selectedProduct.name}
                       </p>
-                      <p className="text-[10px] font-mono text-indigo-600 font-bold mt-0.5">
+                      <p className="text-[10px] font-mono text-slate-600 font-bold mt-0.5">
                         SKU: {selectedProduct.No || selectedProduct.sku}
                       </p>
                     </div>
-                    <span className="text-[9px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold border border-indigo-200">
+                    <span className="text-[9px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold border border-slate-200">
                       Terpilih
                     </span>
                   </div>
@@ -587,7 +592,7 @@ export default function Scan() {
                   Nomor Rak (Lokasi Penyimpanan)
                 </label>
                 {selectedProduct && activeScanOffice && (
-                  <p className="text-[10px] text-indigo-600 font-semibold">
+                  <p className="text-[10px] text-slate-600 font-semibold">
                     Rak terakhir untuk SKU &amp; wilayah ini:{" "}
                     <span className="font-black">
                       {getLastRakFromStorage(
@@ -605,7 +610,7 @@ export default function Scan() {
                     value={rak}
                     onChange={(e) => setRak(e.target.value)}
                     min={1}
-                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                   />
                   {rak && (
                     <button
@@ -632,7 +637,7 @@ export default function Scan() {
                     value={qty}
                     onChange={(e) => setQty(e.target.value)}
                     step="1"
-                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-semibold text-slate-800 rounded-2xl pl-10 pr-12 py-3.5 outline-none transition-all duration-150"
                   />
                   {qty && (
                     <button
@@ -662,7 +667,7 @@ export default function Scan() {
                 <button
                   type="submit"
                   disabled={isSaving || !scanAllowed}
-                  className="flex-2 py-3.5 bg-linear-to-r from-indigo-500 to-indigo-650 hover:from-indigo-450 hover:to-indigo-600 text-white text-xs font-bold rounded-2xl shadow-lg shadow-indigo-500/10 transition-all duration-150 active:scale-98 disabled:opacity-60"
+                  className="flex-2 py-3.5 bg-linear-to-r bg-slate-500 text-white text-xs font-bold rounded-2xl shadow-lg shadow-slate-500/10 transition-all duration-150 active:scale-98 disabled:opacity-60"
                 >
                   {isSaving ? "Menyimpan..." : "Simpan Hasil Scan"}
                 </button>
@@ -694,7 +699,7 @@ export default function Scan() {
                   </span>
                   . Qty baru akan <span className="font-bold">ditambahkan</span>{" "}
                   menjadi{" "}
-                  <span className="font-bold text-indigo-700">
+                  <span className="font-bold text-slate-700">
                     {rescanConfirm.previousQty + rescanConfirm.addedQty}
                   </span>
                   .

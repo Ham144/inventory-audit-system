@@ -479,6 +479,22 @@ router.post("/scan/approve", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Scan tidak ditemukan" });
     }
 
+    const compareItem = await prisma.compareItem.findUnique({
+      where: {
+        sessionId_sku: {
+          sessionId: scan.sessionId,
+          sku: scan.sku,
+        },
+      },
+    });
+
+    if (compareItem && compareItem.status === "SESUAI") {
+      return res.status(400).json({
+        error: "sku untuk warehouse ini sudah sesuai dengan nav",
+        message: "sku untuk warehouse ini sudah sesuai dengan nav",
+      });
+    }
+
     const session = await prisma.opnameSession.findUnique({
       where: { id: scan.sessionId },
     });
@@ -545,6 +561,23 @@ async function assertAdminScanMutation(req: Request, scanLogId: string) {
   });
   if (!scan) {
     return { ok: false as const, status: 404, error: "Scan tidak ditemukan" };
+  }
+
+  const compareItem = await prisma.compareItem.findUnique({
+    where: {
+      sessionId_sku: {
+        sessionId: scan.sessionId,
+        sku: scan.sku,
+      },
+    },
+  });
+
+  if (compareItem && compareItem.status === "SESUAI") {
+    return {
+      ok: false as const,
+      status: 400,
+      error: "sku untuk warehouse ini sudah sesuai dengan nav",
+    };
   }
 
   const session = await prisma.opnameSession.findUnique({

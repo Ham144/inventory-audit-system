@@ -211,14 +211,14 @@ export default function SelisihPage() {
 
   const operatorUsers = useMemo(() => {
     return (usersQuery.data ?? []).filter(
-      (u) => u.role === "operator" || u.role === "admin",
+      (u) => u.role === "operator",
     );
   }, [usersQuery.data]);
 
   if (userInfo === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="loading loading-spinner loading-lg text-indigo-500" />
+        <span className="loading loading-spinner loading-lg text-slate-500" />
       </div>
     );
   }
@@ -234,7 +234,7 @@ export default function SelisihPage() {
       <div className="max-w-6xl space-y-6">
         <Link
           to="/input"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-600"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Kembali ke input scan
@@ -270,7 +270,7 @@ export default function SelisihPage() {
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1.5 min-w-50 flex-1">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Search className="h-3 w-3 text-indigo-500" />
+                <Search className="h-3 w-3 text-slate-500" />
                 Cari SKU / Nama
               </label>
               <input
@@ -284,7 +284,7 @@ export default function SelisihPage() {
 
             <div className="flex flex-col gap-1.5 min-w-30">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Layers className="h-3 w-3 text-indigo-500" />
+                <Layers className="h-3 w-3 text-slate-500" />
                 No Rak
               </label>
               <select
@@ -303,7 +303,7 @@ export default function SelisihPage() {
 
             <div className="flex flex-col gap-1.5 min-w-35">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Calendar className="h-3 w-3 text-indigo-500" />
+                <Calendar className="h-3 w-3 text-slate-500" />
                 Dari Tanggal
               </label>
               <input
@@ -317,7 +317,7 @@ export default function SelisihPage() {
 
             <div className="flex flex-col gap-1.5 min-w-35">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Calendar className="h-3 w-3 text-indigo-500" />
+                <Calendar className="h-3 w-3 text-slate-500" />
                 Sampai
               </label>
               <input
@@ -333,7 +333,7 @@ export default function SelisihPage() {
             {showOfficePicker && (
               <div className="flex flex-col gap-1.5 min-w-45">
                 <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                  <MapPin className="h-3 w-3 text-indigo-500" />
+                  <MapPin className="h-3 w-3 text-slate-500" />
                   Wilayah
                 </label>
                 <select
@@ -368,7 +368,7 @@ export default function SelisihPage() {
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
           {navQuery.isLoading ? (
             <div className="flex justify-center py-16">
-              <span className="loading loading-spinner loading-lg text-indigo-500" />
+              <span className="loading loading-spinner loading-lg text-slate-500" />
             </div>
           ) : navQuery.isError ? (
             <div className="p-8 text-center text-red-600 text-sm">
@@ -406,7 +406,7 @@ export default function SelisihPage() {
                       delegateMutation.variables?.id === row.id;
                     return (
                       <tr key={row.id} className="hover:bg-slate-50/80 group">
-                        <td className="font-mono font-semibold text-indigo-700">
+                        <td className="font-mono font-semibold text-slate-700">
                           {row.sku}
                         </td>
                         <td className="text-slate-700 max-w-50 truncate">
@@ -468,7 +468,7 @@ export default function SelisihPage() {
                           <button
                             type="button"
                             onClick={() => navigate(`/input?sku=${row.sku}`)}
-                            className="btn btn-xs btn-primary bg-indigo-600 hover:bg-indigo-700 border-none rounded-lg text-[10px] font-bold opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                            className="btn btn-xs btn-primary bg-slate-600 hover:bg-slate-700 border-none rounded-lg text-[10px] font-bold opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
                           >
                             <PenLine className="h-3 w-3" />
                             Input

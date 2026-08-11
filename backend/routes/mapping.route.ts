@@ -71,7 +71,7 @@ router.post("/", assertAdmin, async (req: Request, res: Response) => {
 // 3. PUT update a mapping
 router.put("/:id", assertAdmin, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const { officeName, locationCode } = req.body as {
       officeName?: string;
       locationCode?: string;
@@ -84,7 +84,7 @@ router.put("/:id", assertAdmin, async (req: Request, res: Response) => {
     }
 
     const mapping = await prisma.officeMapping.update({
-      where: { id: id[0] },
+      where: { id },
       data: {
         officeName: officeName.trim(),
         locationCode: locationCode.trim().toUpperCase(),
@@ -106,10 +106,10 @@ router.put("/:id", assertAdmin, async (req: Request, res: Response) => {
 // 4. DELETE a mapping
 router.delete("/:id", assertAdmin, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     await prisma.officeMapping.delete({
-      where: { id: id[0] },
+      where: { id },
     });
 
     clearMappingsCache();

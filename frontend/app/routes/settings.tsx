@@ -7,8 +7,6 @@ import {
   RefreshCw,
   Palette,
   Shield,
-  CheckCircle2,
-  AlertCircle,
   MapPin,
   Plus,
   Trash2,
@@ -18,6 +16,7 @@ import {
   UserPlus,
   KeyRound,
   Lock,
+  Delete,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocsShell } from "~/components/DocsShell";
@@ -38,6 +37,7 @@ import {
   updateAppUserOffice,
   deleteAppUserFromOpname,
   syncNonAdAppUser,
+  type AppUserRecord,
 } from "~/api/opnameUserApi";
 import locationApi from "~/api/LocationApi";
 import {
@@ -46,15 +46,8 @@ import {
   isOwner,
   userRole,
   userSessionLabel,
-  userOffice,
 } from "~/libs/user-access";
-import {
-  getAdminDefaultOffice,
-  getAppTheme,
-  setAdminDefaultOffice,
-  setAppTheme,
-  type AppTheme,
-} from "~/libs/app-prefs";
+import { getAppTheme, setAppTheme, type AppTheme } from "~/libs/app-prefs";
 import {
   normalizeLocationList,
   resolveInitialPickedOffice,
@@ -62,6 +55,7 @@ import {
   fetchAndCacheMappings,
   type LocationItem,
 } from "~/libs/location";
+import { toast } from "sonner";
 
 const ROLE_LABELS: Record<AppRole, string> = {
   operator: "Operator",
@@ -85,12 +79,10 @@ export default function SettingsPage() {
   const { userInfo, setUserInfo } = useUserInfo();
   const queryClient = useQueryClient();
   const [theme, setTheme] = useState<AppTheme>(() => getAppTheme());
-  const [adminOffice, setAdminOffice] = useState(() => getAdminDefaultOffice());
   const [locations, setLocations] = useState<LocationItem[]>([]);
-  const [toast, setToast] = useState<{
-    message: string;
-    type: "success" | "warning";
-  } | null>(null);
+
+  //userInfo
+  const iamowner = isOwner(userInfo);
 
   const [mappings, setMappings] = useState<OfficeMappingRecord[]>([]);
   const [isLoadingMappings, setIsLoadingMappings] = useState(false);
@@ -100,7 +92,6 @@ export default function SettingsPage() {
   const [isAdding, setIsAdding] = useState(false);
 
   const [isAddingUser, setIsAddingUser] = useState(false);
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<AppRole>("operator");
@@ -112,57 +103,64 @@ export default function SettingsPage() {
   const [resetPasswordValue, setResetPasswordValue] = useState("");
   const [isResettingPassword, setIsResettingPassword] = useState(false);
 
-  const handleCreateNonAdUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUsername.trim() || !newPassword.trim()) {
-      setToast({
-        message: "Username dan Password wajib diisi",
-        type: "warning",
-      });
-      return;
-    }
-    setIsCreatingUser(true);
-    try {
-      await createAppUser({
-        username: newUsername.trim(),
-        password: newPassword.trim(),
-        role: newRole,
-        office: newOffice || undefined,
-      });
+  const { mutate: handleCreateNonAdUser, isPending: isCreatingUser } =
+    useMutation({
+      mutationKey: ["user"],
+      // 1. TAMBAHKAN 'async' di sini karena di dalamnya ada 'await'
+      mutationFn: async () => {
+        if (!newUsername.trim() || !newPassword.trim()) {
+          toast.error("Username dan Password wajib diisi"); // Diubah ke toast.error agar konsisten
+          return; // 2. Di sini berhenti kalau validasi gagal
+        } // <- Tadi kurung penutup if ini hilang
 
-      await syncNonAdAppUser({
-        username: newUsername.trim(),
-        role: newRole,
-        office: newOffice || null,
-      });
+        // 3. Sekarang kode di bawah ini bisa berjalan karena tidak terpotong return kosong
+        const createdRes = await createAppUser({
+          username: newUsername.trim(),
+          password: newPassword.trim(),
+          role: newRole,
+          office: newOffice || undefined,
+        });
 
-      setToast({
-        message: `User Non-AD "${newUsername.trim()}" berhasil dibuat`,
-        type: "success",
-      });
-      setIsAddingUser(false);
-      setNewUsername("");
-      setNewPassword("");
-      setNewRole("operator");
-      setNewOffice("");
-      queryClient.invalidateQueries({ queryKey: ["app-users"] });
-    } catch (err: any) {
-      setToast({
-        message:
+        const mongooseId =
+          createdRes?.data?._id ||
+          createdRes?.data?.id ||
+          createdRes?.user?._id ||
+          createdRes?.user?.id ||
+          createdRes?._id ||
+          createdRes?.id;
+
+        await syncNonAdAppUser({
+          username: newUsername.trim(),
+          role: newRole,
+          office: newOffice || null,
+          mongooseId: mongooseId ? String(mongooseId) : null,
+        });
+
+        toast.success(`User Non-AD "${newUsername.trim()}" berhasil dibuat`);
+        setIsAddingUser(false);
+        setNewUsername("");
+        setNewPassword("");
+        setNewRole("operator");
+        setNewOffice("");
+      }, // 4. Menambahkan penutup fungsi mutationFn yang tadi hilang
+      onError: (err: any) => {
+        // Mengambil error message dari response data
+        toast.error(
           err?.response?.data?.message ||
-          err?.message ||
-          "Gagal membuat user Non-AD",
-        type: "warning",
-      });
-    } finally {
-      setIsCreatingUser(false);
-    }
-  };
+            err?.response?.data?.error ||
+            err?.message ||
+            "Terjadi kesalahan",
+        );
+      },
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ["app-users"] });
+      },
+    });
 
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetPasswordUser || !resetPasswordValue.trim()) {
-      setToast({ message: "Password baru wajib diisi", type: "warning" });
+      toast("Password baru wajib diisi");
       return;
     }
     setIsResettingPassword(true);
@@ -171,20 +169,15 @@ export default function SettingsPage() {
         username: resetPasswordUser,
         newPassword: resetPasswordValue.trim(),
       });
-      setToast({
-        message: `Password user "${resetPasswordUser}" berhasil diperbarui`,
-        type: "success",
-      });
+      toast(`Password user "${resetPasswordUser}" berhasil diperbarui`);
       setResetPasswordUser(null);
       setResetPasswordValue("");
     } catch (err: any) {
-      setToast({
-        message:
-          err?.response?.data?.message ||
+      toast(
+        err?.response?.data?.message ||
           err?.message ||
           "Gagal mereset password",
-        type: "warning",
-      });
+      );
     } finally {
       setIsResettingPassword(false);
     }
@@ -199,10 +192,24 @@ export default function SettingsPage() {
     enabled: Boolean(userInfo?.username),
   });
 
+  const deleteUserMutation = useMutation({
+    mutationFn: async (username: string) =>
+      await deleteAppUserFromOpname(username),
+    onSuccess: (_, username) => {
+      queryClient.invalidateQueries({ queryKey: ["app-users"] });
+      toast.success(`User "${username}" berhasil dihapus`);
+    },
+    onError: (er: any) => {
+      toast.error(
+        er?.response?.data?.message || er?.message || "Gagal menghapus user",
+      );
+    },
+  });
+
   const usersQuery = useQuery({
     queryKey: ["app-users"],
     queryFn: listAppUsers,
-    enabled: showOwnerSection,
+    enabled: canAccessAdmin(userInfo),
   });
 
   const syncMutation = useMutation({
@@ -218,10 +225,15 @@ export default function SettingsPage() {
         role: data.role ?? userInfo?.role,
       });
       queryClient.invalidateQueries({ queryKey: ["app-user", "me"] });
-      setToast({ message: "Office berhasil disinkronkan", type: "success" });
+      toast.success("Office berhasil disinkronkan");
     },
-    onError: () => {
-      setToast({ message: "Gagal sinkronisasi office", type: "warning" });
+    onError: (er: any) => {
+      toast.error(
+        er?.response?.data?.message ||
+          er?.response?.data?.error ||
+          er?.message ||
+          "Terjadi kesalahan",
+      );
     },
   });
 
@@ -235,13 +247,10 @@ export default function SettingsPage() {
     }) => await updateAppUserRole(username, role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["app-users"] });
-      setToast({ message: "Role berhasil diperbarui", type: "success" });
+      toast.success("Role berhasil diperbarui");
     },
     onError: (e: any) => {
-      setToast({
-        message: e?.response?.data?.message || "Gagal memperbarui role",
-        type: "warning",
-      });
+      toast.error(e?.response?.data?.message || "Gagal memperbarui role");
     },
   });
 
@@ -255,13 +264,12 @@ export default function SettingsPage() {
     }) => await updateAppUserOffice(username, office),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["app-users"] });
-      setToast({ message: "Office user berhasil diperbarui", type: "success" });
+      toast.success("Office user berhasil diperbarui");
     },
     onError: (e: any) => {
-      setToast({
-        message: e?.response?.data?.message || "Gagal memperbarui office user",
-        type: "warning",
-      });
+      toast.error(
+        e?.response?.data?.message || "Gagal memperbarui office user",
+      );
     },
   });
 
@@ -270,16 +278,10 @@ export default function SettingsPage() {
       navigate("/login", { replace: true });
       return;
     }
-    if (userInfo && !isOwner(userInfo)) {
+    if (userInfo && !canAccessAdmin(userInfo)) {
       navigate("/input", { replace: true });
     }
   }, [userInfo, navigate]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(timer);
-  }, [toast]);
 
   useEffect(() => {
     if (!showOwnerSection) return;
@@ -290,16 +292,6 @@ export default function SettingsPage() {
         const res = await locationApi.getAllLocation("");
         const list = normalizeLocationList(res);
         setLocations(list);
-        setAdminOffice(
-          (prev) =>
-            prev ||
-            resolveInitialPickedOffice({
-              userOffice: userOffice(userInfo),
-              savedOffice: prev,
-              locations: list,
-              fallback: "",
-            }),
-        );
       } catch {
         setLocations([]);
       }
@@ -314,7 +306,7 @@ export default function SettingsPage() {
       setMappings(data);
     } catch (err) {
       console.error(err);
-      setToast({ message: "Gagal memuat pemetaan lokasi", type: "warning" });
+      toast.error("Gagal memuat pemetaan lokasi");
     } finally {
       setIsLoadingMappings(false);
     }
@@ -332,10 +324,7 @@ export default function SettingsPage() {
         officeName: formOfficeName.trim(),
         locationCode: formLocationCode.trim().toUpperCase(),
       });
-      setToast({
-        message: "Pemetaan lokasi berhasil ditambahkan",
-        type: "success",
-      });
+      toast.success("Pemetaan lokasi berhasil ditambahkan");
       setFormOfficeName("");
       setFormLocationCode("");
       setIsAdding(false);
@@ -344,7 +333,7 @@ export default function SettingsPage() {
     } catch (err: any) {
       const errorMsg =
         err.response?.data?.error || "Gagal menambahkan pemetaan";
-      setToast({ message: errorMsg, type: "warning" });
+      toast.error(errorMsg);
     }
   };
 
@@ -355,10 +344,7 @@ export default function SettingsPage() {
         officeName: formOfficeName.trim(),
         locationCode: formLocationCode.trim().toUpperCase(),
       });
-      setToast({
-        message: "Pemetaan lokasi berhasil diperbarui",
-        type: "success",
-      });
+      toast("Pemetaan lokasi berhasil diperbarui");
       setEditingId(null);
       setFormOfficeName("");
       setFormLocationCode("");
@@ -367,7 +353,7 @@ export default function SettingsPage() {
     } catch (err: any) {
       const errorMsg =
         err.response?.data?.error || "Gagal memperbarui pemetaan";
-      setToast({ message: errorMsg, type: "warning" });
+      toast.error(errorMsg);
     }
   };
 
@@ -375,14 +361,13 @@ export default function SettingsPage() {
     if (!confirm("Apakah Anda yakin ingin menghapus pemetaan ini?")) return;
     try {
       await deleteOfficeMapping(id);
-      setToast({
-        message: "Pemetaan lokasi berhasil dihapus",
-        type: "success",
-      });
+      toast.error("Pemetaan lokasi berhasil dihapus");
       clearFrontendMappingsCache();
       fetchMappings();
-    } catch (err) {
-      setToast({ message: "Gagal menghapus pemetaan", type: "warning" });
+    } catch (err: any) {
+      toast.error(
+        ((err?.message as string) || "Gagal menghapus pemetaan") as string,
+      );
     }
   };
 
@@ -403,18 +388,12 @@ export default function SettingsPage() {
     setAppTheme(next);
   };
 
-  const handleAdminOfficeChange = (value: string) => {
-    setAdminOffice(value);
-    setAdminDefaultOffice(value);
-    setToast({ message: "Default office admin disimpan", type: "success" });
-  };
-
   const displayOffice = profileQuery.data?.office ?? userInfo?.office ?? "—";
 
   if (userInfo === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <span className="loading loading-spinner loading-lg text-indigo-500" />
+        <span className="loading loading-spinner loading-lg text-slate-500" />
       </div>
     );
   }
@@ -424,7 +403,7 @@ export default function SettingsPage() {
       <div className="max-w-3xl space-y-6">
         <Link
           to="/input"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-indigo-600"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-600"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Kembali ke input scan
@@ -445,7 +424,7 @@ export default function SettingsPage() {
         {/* Profil */}
         <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
           <div className="flex items-center gap-2">
-            <User className="h-4 w-4 text-indigo-500" />
+            <User className="h-4 w-4 text-slate-500" />
             <h2 className="font-bold text-slate-900">Profil</h2>
           </div>
 
@@ -480,7 +459,7 @@ export default function SettingsPage() {
             type="button"
             onClick={() => syncMutation.mutate()}
             disabled={syncMutation.isPending}
-            className="btn btn-sm btn-outline border-indigo-200 text-indigo-700 gap-2"
+            className="btn btn-sm btn-outline border-slate-200 text-slate-700 gap-2"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`}
@@ -492,7 +471,7 @@ export default function SettingsPage() {
         {/* Preferensi UI */}
         <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
           <div className="flex items-center gap-2">
-            <Palette className="h-4 w-4 text-indigo-500" />
+            <Palette className="h-4 w-4 text-slate-500" />
             <h2 className="font-bold text-slate-900">Preferensi UI</h2>
           </div>
 
@@ -523,7 +502,7 @@ export default function SettingsPage() {
         <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-indigo-500" />
+              <MapPin className="h-4 w-4 text-slate-500" />
               <h2 className="font-bold text-slate-900">
                 Pemetaan Lokasi (Office & ERP Code)
               </h2>
@@ -542,11 +521,11 @@ export default function SettingsPage() {
 
           <p className="text-xs text-slate-500">
             Digunakan untuk mencocokkan Nama Office pengguna (misal:{" "}
-            <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">
+            <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-semibold">
               WL Pluit
             </code>
             ) dengan Kode Lokasi yang berasal dari ERP (misal:{" "}
-            <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-semibold">
+            <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600 font-semibold">
               PLUIT_JUAL
             </code>
             ).
@@ -614,7 +593,7 @@ export default function SettingsPage() {
 
           {isLoadingMappings ? (
             <div className="flex justify-center py-6">
-              <span className="loading loading-spinner loading-md text-indigo-500" />
+              <span className="loading loading-spinner loading-md text-slate-500" />
             </div>
           ) : mappings.length === 0 ? (
             <p className="text-xs text-slate-400 text-center py-4">
@@ -688,7 +667,7 @@ export default function SettingsPage() {
                               <button
                                 type="button"
                                 onClick={() => startEdit(row)}
-                                className="btn btn-xs btn-ghost text-slate-500 hover:text-indigo-600"
+                                className="btn btn-xs btn-ghost text-slate-500 hover:text-slate-600"
                                 disabled={!!editingId || isAdding}
                               >
                                 <Edit2 className="h-3.5 w-3.5" />
@@ -714,11 +693,11 @@ export default function SettingsPage() {
         </section>
 
         {/* Manajemen User (Non-AD & AD) */}
-        {showOwnerSection && (
+        {canAccessAdmin(userInfo) && (
           <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Shield className="h-4 w-4 text-indigo-500" />
+                <Shield className="h-4 w-4 text-slate-500" />
                 <h2 className="font-bold text-slate-900">
                   Manajemen User (Non-AD & AD)
                 </h2>
@@ -743,11 +722,14 @@ export default function SettingsPage() {
             {/* Form Tambah User Non-AD */}
             {isAddingUser && (
               <form
-                onSubmit={handleCreateNonAdUser}
-                className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-100 space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleCreateNonAdUser();
+                }}
+                className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3"
               >
-                <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
-                  <UserPlus className="h-4 w-4 text-indigo-600" />
+                <div className="flex items-center gap-2 text-slate-800 font-bold text-xs">
+                  <UserPlus className="h-4 w-4 text-slate-600" />
                   <span>Tambah User Baru (Tanpa AD / Local App)</span>
                 </div>
 
@@ -813,9 +795,9 @@ export default function SettingsPage() {
                       onChange={(e) => setNewOffice(e.target.value)}
                     >
                       <option value="">-- Pilih Office (Opsional) --</option>
-                      {locations.map((loc) => (
-                        <option key={loc.name} value={loc.name}>
-                          {loc.name}
+                      {mappings.map((loc) => (
+                        <option key={loc.officeName} value={loc.officeName}>
+                          {loc.officeName}
                         </option>
                       ))}
                     </select>
@@ -853,7 +835,7 @@ export default function SettingsPage() {
 
             {usersQuery.isLoading ? (
               <div className="flex justify-center py-8">
-                <span className="loading loading-spinner loading-md text-indigo-500" />
+                <span className="loading loading-spinner loading-md text-slate-500" />
               </div>
             ) : usersQuery.isError ? (
               <p className="text-sm text-red-600">Gagal memuat daftar user.</p>
@@ -906,7 +888,7 @@ export default function SettingsPage() {
                               <select
                                 className="select select-bordered select-xs font-semibold bg-white"
                                 value={(row.role ?? "operator").toLowerCase()}
-                                disabled={roleMutation.isPending}
+                                disabled={roleMutation.isPending || !iamowner}
                                 onChange={(e) =>
                                   roleMutation.mutate({
                                     username: row.username,
@@ -933,31 +915,60 @@ export default function SettingsPage() {
                               }
                             >
                               <option value="">-- Pilih Office --</option>
-                              {locations.map((loc) => (
-                                <option key={loc.name} value={loc.name}>
-                                  {loc.name}
+                              {mappings.map((loc) => (
+                                <option
+                                  key={loc.officeName}
+                                  value={loc.officeName}
+                                >
+                                  {loc.officeName}
                                 </option>
                               ))}
                             </select>
                           </td>
                           <td className="text-right">
                             <div className="flex justify-end gap-1">
-                              {(row.type === "app" || row.authMethod === "app") && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setResetPasswordUser(row.username)
-                                  }
-                                  className="btn btn-xs btn-ghost text-slate-600 hover:text-indigo-600 gap-1"
-                                  title="Reset Password"
-                                >
-                                  <KeyRound className="h-3.5 w-3.5" />
-                                  <span className="hidden sm:inline">
-                                    Reset
-                                  </span>
-                                </button>
+                              {row.type === "app" ||
+                              row.authMethod === "app" ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setResetPasswordUser(row.username)
+                                    }
+                                    className="btn btn-xs btn-ghost text-slate-600 hover:text-slate-600 gap-1"
+                                    title="Reset Password"
+                                  >
+                                    <KeyRound className="h-3.5 w-3.5" />
+                                    <span className="hidden sm:inline">
+                                      Reset
+                                    </span>
+                                  </button>
+                                  {canAccessAdmin(userInfo) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (
+                                          confirm(
+                                            `Apakah Anda yakin ingin menghapus user "${row.username}"?`,
+                                          )
+                                        ) {
+                                          deleteUserMutation.mutate(
+                                            row.username,
+                                          );
+                                        }
+                                      }}
+                                      className="btn btn-xs btn-ghost text-red-500 hover:text-red-600 hover:bg-red-50 p-1 cursor-pointer"
+                                      title="Hapus User"
+                                      disabled={deleteUserMutation.isPending}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                <Lock className="text-slate-300 h-5 w-5 cursor-not-allowed" />
                               )}
-                             </div>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -975,7 +986,7 @@ export default function SettingsPage() {
             <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                  <div className="p-2 bg-slate-50 rounded-xl text-slate-600">
                     <KeyRound className="h-5 w-5" />
                   </div>
                   <div>
@@ -984,7 +995,7 @@ export default function SettingsPage() {
                     </h3>
                     <p className="text-xs text-slate-500">
                       Target:{" "}
-                      <span className="font-semibold text-indigo-600">
+                      <span className="font-semibold text-slate-600">
                         {resetPasswordUser}
                       </span>
                     </p>
@@ -1045,25 +1056,6 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
-
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50">
-          <div
-            className={`flex items-center gap-3 px-5 py-4 rounded-2xl border backdrop-blur-xl shadow-xl ${
-              toast.type === "success"
-                ? "bg-white border-emerald-200/80 text-emerald-900"
-                : "bg-white border-red-200/80 text-red-900"
-            }`}
-          >
-            {toast.type === "success" ? (
-              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <AlertCircle className="h-5 w-5 text-red-500" />
-            )}
-            <span className="text-sm font-semibold">{toast.message}</span>
-          </div>
-        </div>
-      )}
     </DocsShell>
   );
 }

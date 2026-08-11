@@ -22,6 +22,7 @@ import {
   isOwner,
   canAccessAdmin,
   readJwtUsername,
+  readJwtMongooseId,
   resolveAppUser,
   resolveOfficeFilter,
 } from "../utils/app-user.js";
@@ -32,6 +33,7 @@ import {
   updateUserOffice,
   deleteUser,
   upsertUser,
+  findUserByUsername,
 } from "../utils/user-store.js";
 import {
   parseCatalogList,
@@ -71,10 +73,13 @@ router.post("/me/sync", async (req: any, res: Response) => {
       description?: string | null;
     };
 
+    const mongooseId = readJwtMongooseId(req.user);
+
     const user = await syncUserProfile({
       username,
       office: office?.trim() || null,
       description: description?.trim() || null,
+      mongooseId: mongooseId || null,
     });
 
     return res.json(user);
@@ -86,7 +91,7 @@ router.post("/me/sync", async (req: any, res: Response) => {
 router.get("/users", async (req: any, res: Response) => {
   try {
     const appUser = await resolveAppUser(req);
-    if (!canAccessAdmin(appUser)) {
+    if (appUser?.role != "admin" && appUser?.role != "owner") {
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
@@ -108,6 +113,12 @@ router.patch("/users/:username/role", async (req: any, res: Response) => {
     );
     if (!canAccessAdmin(appUser)) {
       return res.status(403).json({ message: "Akses ditolak" });
+    }
+
+    if (!isOwner(appUser)) {
+      return res
+        .status(403)
+        .json({ message: "Akses ditolak. Hanya owner yang dapat mengubah role." });
     }
 
     const targetUsername = (req.params.username as string)?.trim();
@@ -147,7 +158,6 @@ router.patch("/users/:username/office", async (req: any, res: Response) => {
     if (!canAccessAdmin(appUser)) {
       return res.status(403).json({ message: "Akses ditolak" });
     }
-
     const targetUsername = (req.params.username as string)?.trim();
     if (!targetUsername) {
       return res.status(400).json({ message: "Username wajib diisi" });
@@ -210,7 +220,10 @@ router.delete("/users/:username", async (req: any, res: Response) => {
     let externalId = targetUsername;
     let userExistsOnExternal = true;
 
-    if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
+    const existingUser = await findUserByUsername(targetUsername);
+    if (existingUser?.mongooseId) {
+      externalId = existingUser.mongooseId;
+    } else if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
       try {
         const searchRes = await axios.get(
           `${databaseCenter()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`,
@@ -312,9 +325,11 @@ router.delete("/users/:username", async (req: any, res: Response) => {
           deleteExtRes.data?.message ||
           deleteExtRes.data?.error ||
           `Status HTTP ${deleteExtRes.status}`;
-        return res.status(deleteExtRes.status >= 400 ? deleteExtRes.status : 500).json({
-          message: `Gagal menghapus user di server external: ${extMsg}`,
-        });
+        return res
+          .status(deleteExtRes.status >= 400 ? deleteExtRes.status : 500)
+          .json({
+            message: `Gagal menghapus user di server external: ${extMsg}`,
+          });
       }
     }
 
@@ -337,10 +352,11 @@ router.post("/users/sync-non-ad", async (req: any, res: Response) => {
       return res.status(403).json({ message: "Akses ditolak" });
     }
 
-    const { username, role, office } = req.body as {
+    const { username, role, office, mongooseId } = req.body as {
       username?: string;
       role?: string;
       office?: string | null;
+      mongooseId?: string | null;
     };
 
     if (!username?.trim()) {
@@ -352,6 +368,7 @@ router.post("/users/sync-non-ad", async (req: any, res: Response) => {
       role: role ?? "operator",
       office: office ?? null,
       type: "app",
+      mongooseId: mongooseId ?? null,
     });
 
     return res.json(updated);
@@ -546,6 +563,23 @@ router.post("/scan", async (req: any, res: Response) => {
     }
 
     const session = await getOrCreateActiveSession(loc);
+
+    const compareItem = await prisma.compareItem.findUnique({
+      where: {
+        sessionId_sku: {
+          sessionId: session.id,
+          sku,
+        },
+      },
+    });
+
+    if (compareItem && compareItem.status === "SESUAI") {
+      return res.status(400).json({
+        message: "sku untuk warehouse ini sudah sesuai dengan nav",
+        error: "sku untuk warehouse ini sudah sesuai dengan nav",
+      });
+    }
+
     const rakNum = Number(rak) || 1;
     const qtyNum = Number(qty) || 0;
 
