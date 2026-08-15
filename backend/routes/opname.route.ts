@@ -518,13 +518,14 @@ router.post("/session/create", async (req: Request, res: Response) => {
 router.post("/scan", async (req: any, res: Response) => {
   try {
     const appUser = await resolveAppUser(req);
-    const { sku, name, rak, qty, office } = req.body as {
+    const { sku: rawSku, name, rak, qty, office } = req.body as {
       sku: string;
       name?: string;
       rak?: number | string;
       qty?: number | string;
       office: string;
     };
+    const sku = (rawSku ?? "").trim();
     const access = assertScanAccess(appUser, office);
     if (!access.ok) {
       return res.status(access.status).json({ message: access.message });

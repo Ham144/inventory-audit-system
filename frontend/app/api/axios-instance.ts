@@ -12,7 +12,7 @@ interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
 
 const axiosInstance = axios.create({
   withCredentials: true,
-  baseURL: `${BASE_URL}`,
+  baseURL: import.meta.env.VITE_BACKEND_BASE_URL ?? BASE_URL,
 });
 
 let isRefreshing = false;
@@ -49,7 +49,7 @@ axiosInstance.interceptors.response.use(
 
       try {
         const res = await axios.post(
-          `${BASE_URL}/so/api/auth/refresh-token`,
+          `${import.meta.env.VITE_BACKEND_BASE_URL ?? BASE_URL}/so/api/auth/refresh-token`,
           {},
           { withCredentials: true },
         );

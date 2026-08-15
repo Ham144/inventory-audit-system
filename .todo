@@ -27,7 +27,8 @@ fitur request 27/07/2026
 [x] Master SKU diambil dari Product Group Code = WL
 [x] check nav sudah diganti dari stock menjadi check inventory
 
-[x] delete and create user app sudah bagus
+[x] delete and create user app sudah bagus di halam setting
 [x] mencegah perubahan input mendatang jika sudah di cek sesuai dengan nav ("sku untuk warehouse ini sudah sesuai di sesuai dengan nav")
 [x] settings: admin bisa bantu mapping location jika ada ketidak sesuaian keyword 
 [x] sudah bisa login dengan app
+[x] stok_opname: password reset fix

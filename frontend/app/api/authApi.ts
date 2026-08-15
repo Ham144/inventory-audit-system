@@ -113,8 +113,8 @@ export const switchOrg = async (body: any) => {
   return res.data;
 };
 
-export const resetPassword = async (body: any) => {
-  const res = await axiosInstance.put(`/so/api/auth/resetPassword`, body);
+export const resetPassword = async (_id: string, body: any) => {
+  const res = await axiosInstance.put(`/so/api/auth/resetPassword/${_id}`, body);
   return res.data;
 };
 

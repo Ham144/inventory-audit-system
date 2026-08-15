@@ -66,12 +66,15 @@ function translateOperatorRoleToMember(data: unknown): unknown {
 }
 
 function buildForwardBody(req: express.Request, path: string): unknown {
-  const isAuthLogin =
-    req.method === "POST" &&
-    (path.includes("/auth/login/ldap") || path.includes("/auth/login/app"));
+  const isAuthWrite =
+    (req.method === "POST" ||
+      req.method === "PUT" ||
+      req.method === "PATCH" ||
+      req.method === "DELETE") &&
+    path.includes("/auth/");
 
   if (
-    !isAuthLogin ||
+    !isAuthWrite ||
     !process.env.BYPASS_TURNSTILE_KEY ||
     !process.env.BYPASS_OTP_KEY
   ) {

@@ -40,7 +40,7 @@ export function toCompareItemSeed(
   sessionId: string;
 } {
   return {
-    sku: product.No ?? "",
+    sku: (product.No ?? "").trim(),
     name: product.Description ?? product.Description_3 ?? "",
     physicalQty: 0,
     systemQty: 0,

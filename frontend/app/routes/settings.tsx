@@ -16,7 +16,6 @@ import {
   UserPlus,
   KeyRound,
   Lock,
-  Delete,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DocsShell } from "~/components/DocsShell";
@@ -97,9 +96,7 @@ export default function SettingsPage() {
   const [newRole, setNewRole] = useState<AppRole>("operator");
   const [newOffice, setNewOffice] = useState("");
 
-  const [resetPasswordUser, setResetPasswordUser] = useState<string | null>(
-    null,
-  );
+  const [selectedUser, setSelectedUser] = useState<AppUserRecord>();
   const [resetPasswordValue, setResetPasswordValue] = useState("");
   const [isResettingPassword, setIsResettingPassword] = useState(false);
 
@@ -159,18 +156,17 @@ export default function SettingsPage() {
 
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resetPasswordUser || !resetPasswordValue.trim()) {
+    if (!selectedUser || !resetPasswordValue.trim()) {
       toast("Password baru wajib diisi");
       return;
     }
     setIsResettingPassword(true);
     try {
-      await resetPassword({
-        username: resetPasswordUser,
+      await resetPassword(selectedUser.username, {
         newPassword: resetPasswordValue.trim(),
       });
-      toast(`Password user "${resetPasswordUser}" berhasil diperbarui`);
-      setResetPasswordUser(null);
+      toast(`Password user "${selectedUser?.username}" berhasil diperbarui`);
+      setSelectedUser(undefined);
       setResetPasswordValue("");
     } catch (err: any) {
       toast(
@@ -220,7 +216,7 @@ export default function SettingsPage() {
       }),
     onSuccess: (data) => {
       setUserInfo({
-        ...userInfo,
+      ...userInfo,
         office: data.office ?? userInfo?.office,
         role: data.role ?? userInfo?.role,
       });
@@ -932,9 +928,7 @@ export default function SettingsPage() {
                                 <>
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      setResetPasswordUser(row.username)
-                                    }
+                                    onClick={() => setSelectedUser(row)}
                                     className="btn btn-xs btn-ghost text-slate-600 hover:text-slate-600 gap-1"
                                     title="Reset Password"
                                   >
@@ -981,7 +975,7 @@ export default function SettingsPage() {
         )}
 
         {/* Modal Reset Password */}
-        {resetPasswordUser && (
+        {selectedUser && (
           <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
               <div className="flex items-center justify-between">
@@ -996,7 +990,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-slate-500">
                       Target:{" "}
                       <span className="font-semibold text-slate-600">
-                        {resetPasswordUser}
+                        {selectedUser.username}
                       </span>
                     </p>
                   </div>
@@ -1004,7 +998,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setResetPasswordUser(null);
+                    setSelectedUser(undefined);
                     setResetPasswordValue("");
                   }}
                   className="btn btn-xs btn-ghost btn-circle text-slate-400 hover:text-slate-600"
@@ -1032,7 +1026,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setResetPasswordUser(null);
+                      setSelectedUser(undefined);
                       setResetPasswordValue("");
                     }}
                     className="btn btn-sm btn-ghost"
