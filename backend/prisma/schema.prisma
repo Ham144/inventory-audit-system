@@ -115,3 +115,10 @@ model TracingInput {
   rak Int
   createdat DateTime @default(now())
 }
+
+//ini pengenal sku yang belum dikerjakan sama sekali tiap bulan, ketika create new: maka prosesnya => skuReminder.collectdata -> update tiap sku reminder dengan kosongkan resolvedOffices nya (create jika baru) -> update startPeriod dan EndPeriod nya
+model SkuReminder {
+  id String @id @default(uuid())
+  sku String @unique
+  resolvedOffices String[]
+}
