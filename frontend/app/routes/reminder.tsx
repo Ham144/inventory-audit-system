@@ -1,16 +1,5 @@
-import { useState } from "react"
+import { Navigate } from "react-router";
 
-export default async function SkuReminder() {
-
-    const [selectedSku, setSelectedSku] = useState()
-
-
-    
-    return (
-        <>
-        <div className="">
-        
-        </div>
-        </>
-    )
+export default function ReminderRedirectPage() {
+  return <Navigate to="/tugas" replace />;
 }

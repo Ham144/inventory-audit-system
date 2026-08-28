@@ -4,6 +4,10 @@ import axios, { AxiosError } from "axios";
 import { syncUserProfile } from "../utils/user-store.js";
 import { filterProductListPayload } from "../utils/product-filter.js";
 import { extractAuthProfileFields } from "../utils/auth-profile.js";
+import {
+  getReusableApiBase,
+  getReusableApiHeaders,
+} from "../utils/reusable-api.js";
 
 const router = express.Router();
 
@@ -36,6 +40,9 @@ function buildForwardHeaders(
   if (hasJsonBody) {
     headers["content-type"] = "application/json";
   }
+
+  // Production reusable API requires x-api-key from env
+  Object.assign(headers, getReusableApiHeaders());
 
   return headers;
 }
@@ -188,7 +195,7 @@ router.all(/.*/, async (req, res) => {
 
     const response = await axios({
       method: req.method,
-      url: process.env.DATABASE_CENTER + path,
+      url: getReusableApiBase() + path,
       headers: buildForwardHeaders(req, hasJsonBody),
       data: hasJsonBody ? forwardBody : undefined,
       validateStatus: () => true,

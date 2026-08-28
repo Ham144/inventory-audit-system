@@ -145,7 +145,7 @@ router.all(/.*/, async (req, res) => {
       forwardBody !== null;
     const response = await axios({
       method: req.method,
-      url: process.env.DATABASE_CENTER + path,
+      url: process.env.DATABASE_REUSABLE_API + path,
       headers: buildForwardHeaders(req, hasJsonBody),
       data: hasJsonBody ? forwardBody : undefined,
       validateStatus: () => true,

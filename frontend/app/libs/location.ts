@@ -187,26 +187,26 @@ export function resolvePickedOffice(
 export function resolveInitialPickedOffice(input: {
   userOffice?: string;
   savedOffice?: string;
-  locations: LocationItem[];
+  locations?: LocationItem[];
   fallback?: string;
 }): string {
   const fallback = input.fallback || "Semua";
+  const locations = input.locations ?? [];
   const candidates = [input.userOffice, input.savedOffice]
     .map((value) => value?.trim())
     .filter(Boolean) as string[];
 
-  if (input.locations.length === 0) {
+  if (locations.length === 0) {
     return candidates[0] ?? fallback;
   }
   for (const candidate of candidates) {
-    const match = input.locations.find((loc) =>
+    const match = locations.find((loc) =>
       isMatchingOffice(candidate, loc.name),
     );
     if (match) {
-      console.log("match", match);
       return match.name;
     }
   }
-  
+
   return fallback;
 }

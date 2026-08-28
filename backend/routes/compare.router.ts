@@ -36,8 +36,12 @@ import {
   resolveOfficeFilter,
 } from "../utils/app-user.js";
 import { findUserByUsername } from "../utils/user-store.js";
+import {
+  getReusableApiBase,
+  getReusableApiHeaders,
+} from "../utils/reusable-api.js";
 
-const databaseCenter = () => process.env.DATABASE_CENTER as string;
+const databaseCenter = () => getReusableApiBase();
 
 type SessionScopeWhere =
   | { sessionId: string }
@@ -112,9 +116,9 @@ async function fetchNavStockQty(
     url,
     {
       params: { No: sku, locationCode },
-      headers: {
+      headers: getReusableApiHeaders({
         cookie: req.headers.cookie ?? "",
-      },
+      }),
       validateStatus: () => true,
     },
   );

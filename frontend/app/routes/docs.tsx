@@ -38,7 +38,7 @@ export default function Docs() {
           <li>
             <strong>ERP (SO)</strong> — autentikasi LDAP, produk, stok NAV via{" "}
             <code className="text-xs bg-slate-100 px-1 rounded">
-              DATABASE_CENTER
+              DATABASE_REUSABLE_API
             </code>
           </li>
         </ul>

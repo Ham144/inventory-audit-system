@@ -261,7 +261,7 @@ router.post("/users/sync-non-ad", async (req, res) => {
         return res.status(500).json({ error: errorMessage(error) });
     }
 });
-const databaseCenter = () => process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
+const databaseCenter = () => process.env.DATABASE_REUSABLE_API ?? "http://192.168.169.12:7047";
 function errorMessage(error) {
     return error instanceof Error ? error.message : "Unknown error";
 }

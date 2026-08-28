@@ -9,6 +9,7 @@ import compareRouter from "./routes/compare.router.js";
 import mappingRouter from "./routes/mapping.route.js";
 import authenticate from "./middlewares/authenticate.middleware.js";
 import traceRouter from "./routes/trace.router.js";
+import skuReminderRouter from "./routes/sku-reminder.router.js";
 
 axios.defaults.proxy = false;
 
@@ -55,6 +56,7 @@ app.use("/so/api", externalBackendRouter);
 app.use("/api/compare", compareRouter);
 app.use("/api/mappings", mappingRouter);
 app.use("/api/trace", traceRouter);
+app.use("/api/sku-reminders", skuReminderRouter);
 
 const port = process.env.PORT || 5000;
 

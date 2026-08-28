@@ -1,4 +1,11 @@
-import { History, ScanLine, Settings, Shield, AlertCircle } from "lucide-react";
+import {
+  History,
+  ScanLine,
+  Settings,
+  Shield,
+  AlertCircle,
+  ClipboardList,
+} from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { canAccessAdmin, isOwner, isAdmin } from "~/libs/user-access";
 import { useUserInfo, type UserInfo } from "~/store";
@@ -20,6 +27,12 @@ const NAV_ITEMS = [
     path: "/my-logs",
     label: "My Logs",
     icon: History,
+    show: () => true,
+  },
+  {
+    path: "/tugas",
+    label: "Tugas SKU",
+    icon: ClipboardList,
     show: () => true,
   },
   {

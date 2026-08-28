@@ -121,4 +121,8 @@ model SkuReminder {
   id String @id @default(uuid())
   sku String @unique
   resolvedOffices String[]
+  startPeriod DateTime?
+  endPeriod DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

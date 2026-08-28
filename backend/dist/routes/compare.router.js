@@ -7,7 +7,7 @@ import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, fin
 import { resolveStockQty } from "../types/catalog.js";
 import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
 import { findUserByUsername } from "../utils/user-store.js";
-const databaseCenter = () => process.env.DATABASE_CENTER;
+const databaseCenter = () => process.env.DATABASE_REUSABLE_API;
 const SESSION_OFFICE_SELECT = { office: true };
 async function getOrCreateActiveSession(office) {
     let session = await prisma.opnameSession.findFirst({

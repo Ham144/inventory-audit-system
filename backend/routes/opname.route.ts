@@ -45,7 +45,12 @@ import {
   filterHiddenProducts,
   isHiddenProductSku,
 } from "../utils/product-filter.js";
+import {
+  getReusableApiBase,
+  getReusableApiHeaders,
+} from "../utils/reusable-api.js";
 import { traceInput } from "./trace.router.js";
+import { markSkuReminderResolved } from "./sku-reminder.router.js";
 
 const router = express.Router();
 
@@ -193,7 +198,7 @@ function buildForwardHeaders(req: any): Record<string, string> {
       headers[key] = value.join("; ");
     }
   }
-  return headers;
+  return getReusableApiHeaders(headers);
 }
 
 router.delete("/users/:username", async (req: any, res: Response) => {
@@ -226,7 +231,7 @@ router.delete("/users/:username", async (req: any, res: Response) => {
     } else if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
       try {
         const searchRes = await axios.get(
-          `${databaseCenter()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`,
+          `${databaseReusableApi()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`,
           { headers, validateStatus: () => true },
         );
 
@@ -263,7 +268,7 @@ router.delete("/users/:username", async (req: any, res: Response) => {
         // Jika searchAccount belum mendapatkan 24-char ObjectId, coba getAllAccount
         if (!/^[0-9a-fA-F]{24}$/.test(externalId)) {
           const allRes = await axios.get(
-            `${databaseCenter()}/api/auth/getAllAccount`,
+            `${databaseReusableApi()}/api/auth/getAllAccount`,
             { headers, validateStatus: () => true },
           );
 
@@ -311,7 +316,7 @@ router.delete("/users/:username", async (req: any, res: Response) => {
       }
 
       const deleteExtRes = await axios.delete(
-        `${databaseCenter()}/api/auth/deleteAppUser/${externalId}`,
+        `${databaseReusableApi()}/api/auth/deleteAppUser/${externalId}`,
         { headers, validateStatus: () => true },
       );
 
@@ -377,8 +382,7 @@ router.post("/users/sync-non-ad", async (req: any, res: Response) => {
   }
 });
 
-const databaseCenter = () =>
-  process.env.DATABASE_CENTER ?? "http://192.168.169.12:7047";
+const databaseReusableApi = () => getReusableApiBase();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
@@ -386,7 +390,8 @@ function errorMessage(error: unknown): string {
 
 async function fetchCatalogProducts() {
   const response = await axios.get(
-    `${databaseCenter()}/api/v1/product/list?limit=50`,
+    `${databaseReusableApi()}/api/v1/product/list?limit=50`,
+    { headers: getReusableApiHeaders() },
   );
   return filterHiddenProducts(parseCatalogList(response.data));
 }
@@ -624,6 +629,7 @@ router.post("/scan", async (req: any, res: Response) => {
       sku,
       rak: rakNum,
     });
+    await markSkuReminderResolved(sku, loc);
 
     await prisma.compareItem.upsert({
       where: {
@@ -710,7 +716,8 @@ router.post("/sync", async (req: Request, res: Response) => {
         }
 
         const response = await axios.get<InventoryResponse>(
-          `${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
+          `${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
+          { headers: getReusableApiHeaders() },
         );
 
         const realQty = resolveStockQty(response.data);
@@ -838,7 +845,8 @@ export function startOpnameCron() {
           }
           try {
             const response = await axios.get<InventoryResponse>(
-              `${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`,
+              `${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`,
+              { headers: getReusableApiHeaders() },
             );
 
             const realQty = resolveStockQty(response.data);

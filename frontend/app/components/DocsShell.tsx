@@ -19,6 +19,7 @@ const APP_MENUS = [
   { path: "/admin", label: "/admin", desc: "Dashboard" },
   { path: "/settings", label: "/settings", desc: "Pengaturan" },
   { path: "/my-logs", label: "/my-logs", desc: "Riwayat scan" },
+  { path: "/tugas", label: "/tugas", desc: "Tugas SKU unresolved" },
 ] as const;
 
 type DocsShellProps = {

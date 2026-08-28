@@ -32,3 +32,10 @@ fitur request 27/07/2026
 [x] settings: admin bisa bantu mapping location jika ada ketidak sesuaian keyword 
 [x] sudah bisa login dengan app
 [x] stok_opname: password reset fix
+// 2026-08-28
+
+[] gabungkan yang belum dikerjakan sama sekali dari page "tugas SKU" ke dalam "cek selisih" 
+[] buat tombol cutt-off hanya bekerja pada 1 gudang pelaku
+[] buat 2 mode periode tiap gudang: free mode & opname mode
+   - free mode: mode awal, saat erp belum bisa dijadikan patokan. mode ini tombol compare nav tidak berfungsi.
+   - opname mode: mode periode baru, mode ini melakukan penarikan erp dan menambahkannya ke "cek selisih". di mode ini tombol compare nav menjadi aktiv kembali

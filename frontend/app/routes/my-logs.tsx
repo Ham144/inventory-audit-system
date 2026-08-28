@@ -249,6 +249,12 @@ export default function MyLogsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Link
+              to="/tugas"
+              className="btn btn-sm btn-ghost border border-slate-200 text-slate-600 hover:text-slate-700"
+            >
+              Tugas SKU
+            </Link>
             <button
               onClick={() => scansQuery.refetch()}
               disabled={scansQuery.isFetching}
