@@ -121,8 +121,20 @@ model SkuReminder {
   id String @id @default(uuid())
   sku String @unique
   resolvedOffices String[]
+  officeDelegations Json @default("{}")
   startPeriod DateTime?
-  endPeriod DateTime?
+  endPeriod DateTime? 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// State periode opname per gudang: FREE | OPNAME
+// Cukup 2 timestamp: openedAt (Buka) + closedAt (Tutup). Filter riwayat pakai ini.
+model OfficePeriod {
+  id        String    @id @default(uuid())
+  office    String    @unique // canonical officeName
+  mode      String    @default("FREE") // FREE | OPNAME
+  openedAt  DateTime? // saat Buka periode
+  closedAt  DateTime? // saat Tutup periode
+  updatedAt DateTime  @updatedAt
 }

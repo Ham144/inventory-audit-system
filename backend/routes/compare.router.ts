@@ -1,9 +1,9 @@
 import express, { type Request, type Response } from "express";
-import axios from "axios";
 import { prisma } from "../config/db.js";
 import {
-  mapOfficeToLocation,
   mapLocationToOfficeAsync,
+  resolveOfficeAliases,
+  resolveOfficeName,
 } from "../utils/office-mapping.js";
 import {
   filterNavCompareRows,
@@ -29,19 +29,14 @@ import {
   clearStaleSystemApproval,
   type ScanQtyApprovalRow,
 } from "../utils/scan-approval.js";
-import { resolveStockQty, type InventoryResponse } from "../types/catalog.js";
 import {
   canAccessAdmin,
   resolveAppUser,
   resolveOfficeFilter,
 } from "../utils/app-user.js";
 import { findUserByUsername } from "../utils/user-store.js";
-import {
-  getReusableApiBase,
-  getReusableApiHeaders,
-} from "../utils/reusable-api.js";
-
-const databaseCenter = () => getReusableApiBase();
+import { getOfficePeriodMode } from "../utils/office-period-store.js";
+import { isSkuLockedAsSesuai } from "../utils/compare-sesuai.js";
 
 type SessionScopeWhere =
   | { sessionId: string }
@@ -50,11 +45,15 @@ type SessionScopeWhere =
 const SESSION_OFFICE_SELECT = { office: true };
 
 async function getOrCreateActiveSession(office: string) {
+  const aliases = await resolveOfficeAliases(office);
+  const officeKeys = aliases.length ? aliases : [office];
+
   let session = await prisma.opnameSession.findFirst({
     where: {
-      office,
+      office: { in: officeKeys },
       status: "ONGOING",
     } as never,
+    orderBy: { createdAt: "desc" },
   });
 
   if (!session) {
@@ -76,7 +75,8 @@ async function sessionScopeWhere(
   const office =
     officeCode === "Semua"
       ? "Semua"
-      : await mapLocationToOfficeAsync(officeCode);
+      : (await resolveOfficeName(officeCode)) ??
+        (await mapLocationToOfficeAsync(officeCode));
 
   if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
@@ -86,8 +86,26 @@ async function sessionScopeWhere(
     return { sessionId: { in: sessionIds } };
   }
 
-  const session = await getOrCreateActiveSession(office);
-  return { sessionId: session.id };
+  const aliases = await resolveOfficeAliases(office);
+  const officeKeys = aliases.length ? aliases : [office];
+  const sessions = await prisma.opnameSession.findMany({
+    where: {
+      office: { in: officeKeys },
+      status: "ONGOING",
+    } as never,
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (sessions.length === 0) {
+    const session = await getOrCreateActiveSession(office);
+    return { sessionId: session.id };
+  }
+
+  if (sessions.length === 1) {
+    return { sessionId: sessions[0].id };
+  }
+
+  return { sessionId: { in: sessions.map((s) => s.id) } };
 }
 
 function errorMessage(error: unknown): string {
@@ -101,37 +119,6 @@ function resolveApprover(req: Request): string {
     }
   ).user;
   return user?.username ?? user?.usernameLdap ?? "admin";
-}
-
-async function fetchNavStockQty(
-  sku: string,
-  office: string,
-  req: Request,
-): Promise<number> {
-  const locationCode = await mapOfficeToLocation(office);
-  const url = `${databaseCenter()}/api/v1/inventory/count`;
-  console.log(`[DEBUG fetchNavStockQty] Requesting: ${url} with params:`, { No: sku, locationCode });
-
-  const response = await axios.get<InventoryResponse>(
-    url,
-    {
-      params: { No: sku, locationCode },
-      headers: getReusableApiHeaders({
-        cookie: req.headers.cookie ?? "",
-      }),
-      validateStatus: () => true,
-    },
-  );
-
-  console.log(`[DEBUG fetchNavStockQty] Response Status: ${response.status}`);
-  console.log(`[DEBUG fetchNavStockQty] Response Data Type: ${typeof response.data}`);
-  console.log(`[DEBUG fetchNavStockQty] Response Data:`, response.data);
-
-  if (response.status >= 400) {
-    throw new Error(`getStock failed (${response.status})`);
-  }
-
-  return resolveStockQty(response.data);
 }
 
 async function buildNavRow(
@@ -167,13 +154,22 @@ async function buildNavRow(
     rakStats ??
     (await countRakStatsForSkuLocation(item.sessionId, item.sku, office));
 
+  const stored = item.status.toUpperCase();
+  // Status live vs Initial SOT — jangan pakai SESUAI basi saat fisik approval sudah berubah
+  const status =
+    stored === "BELUM_COMPARE"
+      ? "belum_compare"
+      : physicalQty === item.systemQty
+        ? "sesuai"
+        : "selisih";
+
   return {
     id: item.id,
     sku: item.sku,
     name: item.name,
     physicalQty,
     systemQty: item.systemQty,
-    status: item.status.toLowerCase(),
+    status,
     office,
     updatedAt: item.updatedAt.toISOString(),
     resolvedRakCount: stats.resolvedRakCount,
@@ -492,7 +488,7 @@ router.post("/scan/approve", async (req: Request, res: Response) => {
       },
     });
 
-    if (compareItem && compareItem.status === "SESUAI") {
+    if (await isSkuLockedAsSesuai(compareItem, readOffice(scan))) {
       return res.status(400).json({
         error: "sku untuk warehouse ini sudah sesuai dengan nav",
         message: "sku untuk warehouse ini sudah sesuai dengan nav",
@@ -576,7 +572,7 @@ async function assertAdminScanMutation(req: Request, scanLogId: string) {
     },
   });
 
-  if (compareItem && compareItem.status === "SESUAI") {
+  if (await isSkuLockedAsSesuai(compareItem, readOffice(scan))) {
     return {
       ok: false as const,
       status: 400,
@@ -727,6 +723,30 @@ router.get("/nav", async (req: Request, res: Response) => {
   }
 });
 
+async function assertOfficePeriodAllowsNavCompare(
+  office: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const resolved =
+    (await resolveOfficeName(office.trim())) ?? office.trim();
+  if (!resolved || resolved.toLowerCase() === "semua") {
+    return {
+      ok: false,
+      message:
+        "Cek selisih membutuhkan gudang spesifik yang sudah Buka periode.",
+    };
+  }
+
+  const mode = await getOfficePeriodMode(resolved);
+  if (mode !== "OPNAME") {
+    return {
+      ok: false,
+      message: `Gudang ${resolved} masih mode Free. Tekan Buka periode di Cek Selisih untuk ambil source of truth dulu.`,
+    };
+  }
+
+  return { ok: true };
+}
+
 router.post(
   "/nav/:compareItemId/check",
   async (req: Request, res: Response) => {
@@ -743,12 +763,18 @@ router.post(
       }
 
       const office = readOffice(item.session);
+      const periodGate = await assertOfficePeriodAllowsNavCompare(office);
+      if (!periodGate.ok) {
+        return res.status(400).json({ error: periodGate.message });
+      }
+
+      // Bandingkan fisik vs systemQty snapshot dari Buka periode (bukan fetch NAV ulang)
       const physicalQty = await sumApprovedQtyForSkuLocation(
         item.sessionId,
         item.sku,
         office,
       );
-      const systemQty = await fetchNavStockQty(item.sku, office, req);
+      const systemQty = item.systemQty;
       const status = physicalQty === systemQty ? "SESUAI" : "SELISIH";
 
       const updated = await prisma.compareItem.update({

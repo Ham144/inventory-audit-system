@@ -32,10 +32,16 @@ fitur request 27/07/2026
 [x] settings: admin bisa bantu mapping location jika ada ketidak sesuaian keyword 
 [x] sudah bisa login dengan app
 [x] stok_opname: password reset fix
-// 2026-08-28
 
-[] gabungkan yang belum dikerjakan sama sekali dari page "tugas SKU" ke dalam "cek selisih" 
-[] buat tombol cutt-off hanya bekerja pada 1 gudang pelaku
-[] buat 2 mode periode tiap gudang: free mode & opname mode
-   - free mode: mode awal, saat erp belum bisa dijadikan patokan. mode ini tombol compare nav tidak berfungsi.
-   - opname mode: mode periode baru, mode ini melakukan penarikan erp dan menambahkannya ke "cek selisih". di mode ini tombol compare nav menjadi aktiv kembali
+// 2026-08-29
+[x] gabungkan yang belum dikerjakan sama sekali dari page "tugas SKU" ke dalam "cek selisih" 
+[x] buat tombol cutt-off hanya bekerja pada gudang pelaku
+[x] session hilang saat reload
+[x] filter out daftar sku yang qty < 1
+    - SOAP GetInventoryByLocationMultiple (batch default 50)
+    - hanya dijalankan saat Cut-off (bukan interval / refresh)
+[x] fix: delete reload button, attach its function (geting product Refrence from nav) to the cutt off button
+[x] feat: do not rerun "checkStockMulti" by interval but user start new by clicking the "cutt off" button on /selisih page
+[x] feat: make the akhir periode field on open-new-period modal, optional
+[x] feat: clear out "my logs" data by putting the frontend default filter "dari" "sampai" using startPeriod, endPeriod of the user's location
+[x] feat: Buka / Tutup periode (ganti Cut-off) — FREE/OPNAME per gudang, isi systemQty saat buka, reset SkuReminder saat tutup

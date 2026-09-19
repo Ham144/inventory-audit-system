@@ -8,8 +8,17 @@ export const noAuthOriginalUrl = [
     "/so/api/auth/logout",
 ];
 const authenticate = (req, res, next) => {
-    if (noAuthOriginalUrl.some((e) => req.originalUrl.startsWith(e))) {
-        console.log("skipped :", req.originalUrl);
+    const path = String(req.originalUrl ?? req.url ?? "").split("?")[0];
+    const isPublic = noAuthOriginalUrl.some((publicPath) => {
+        if (publicPath.endsWith("/login")) {
+            return path === publicPath || path.startsWith(`${publicPath}/`);
+        }
+        return path === publicPath;
+    });
+    if (isPublic) {
+        if (process.env.NODE_ENV === "development") {
+            console.log("skipped :", req.originalUrl);
+        }
         return next();
     }
     const bearer = req.headers.authorization;

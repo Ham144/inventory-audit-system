@@ -20,8 +20,13 @@ import {
   resolveInitialPickedOffice,
   resolvePickedOffice,
   fetchAndCacheMappings,
+  canonicalizeLocationList,
   type LocationItem,
 } from "~/libs/location";
+import {
+  getAdminDefaultOffice,
+  setAdminDefaultOffice,
+} from "~/libs/app-prefs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppNavigation } from "~/components/AppNavigation";
 
@@ -161,13 +166,14 @@ export default function Scan() {
       return;
     }
     officeDefaultApplied.current = true;
-    setPickedOffice(
-      resolveInitialPickedOffice({
-        userOffice: userOffice(userInfo),
-        locations,
-        fallback: "",
-      }),
-    );
+    const initial = resolveInitialPickedOffice({
+      userOffice: userOffice(userInfo),
+      savedOffice: getAdminDefaultOffice(),
+      locations,
+      fallback: "",
+    });
+    // Scan tidak boleh "Semua" — kosongkan supaya user pilih lokasi konkret
+    setPickedOffice(initial === "Semua" ? "" : initial);
   }, [showOfficePicker, locations, userInfo]);
 
   useEffect(() => {
@@ -190,7 +196,7 @@ export default function Scan() {
       try {
         await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
-        setLocations(normalizeLocationList(res));
+        setLocations(canonicalizeLocationList(normalizeLocationList(res)));
       } catch {
         setLocations([]);
       } finally {
@@ -372,11 +378,20 @@ export default function Scan() {
       <header className="relative z-10 border-b border-slate-200/80 bg-white/80 backdrop-blur-md px-3 sm:px-6 py-4 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <h1 className="text-base font-bold text-slate-900">Input Stok</h1>
-              <p className="text-[10px] text-slate-500 font-medium">
-                Rekonsiliasi data fisik lapangan
-              </p>
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo.png"
+                alt="Stok Opname CSI"
+                width={36}
+                height={36}
+                className="rounded-xl shadow-sm"
+              />
+              <div>
+                <h1 className="text-base font-bold text-slate-900">Input Stok</h1>
+                <p className="text-[10px] text-slate-500 font-medium">
+                  Rekonsiliasi data fisik lapangan
+                </p>
+              </div>
             </div>
 
             <span className="md:hidden text-[10px] px-3 py-1 rounded-full bg-red-50 border border-red-100 font-bold">
@@ -450,7 +465,11 @@ export default function Scan() {
                   <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
                   <select
                     value={pickedOffice}
-                    onChange={(e) => setPickedOffice(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setPickedOffice(value);
+                      setAdminDefaultOffice(value);
+                    }}
                     disabled={isLoadingLocations}
                     className="w-full bg-slate-50 border border-slate-200 hover:border-slate-350 focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 text-xs font-bold text-slate-800 rounded-2xl pl-10 pr-4 py-3.5 appearance-none cursor-pointer outline-none transition-all duration-150"
                   >

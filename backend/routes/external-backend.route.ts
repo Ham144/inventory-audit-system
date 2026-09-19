@@ -3,7 +3,11 @@ import type { IncomingHttpHeaders } from "http";
 import axios, { AxiosError } from "axios";
 import { syncUserProfile } from "../utils/user-store.js";
 import { filterProductListPayload } from "../utils/product-filter.js";
-import { extractAuthProfileFields } from "../utils/auth-profile.js";
+import {
+  extractAuthProfileFields,
+  readJwtMongooseId,
+  readJwtUsername,
+} from "../utils/auth-profile.js";
 import {
   getReusableApiBase,
   getReusableApiHeaders,
@@ -41,7 +45,7 @@ function buildForwardHeaders(
     headers["content-type"] = "application/json";
   }
 
-  // Production reusable API requires x-api-key from env
+  // Panggilan ke reusable/open API: auth gateway via x-api-key dari .env
   Object.assign(headers, getReusableApiHeaders());
 
   return headers;
@@ -181,6 +185,55 @@ async function enrichAuthProfileResponse(
 function shouldFilterProductList(path: string): boolean {
   return path.includes("/v1/product/list");
 }
+
+function readJwtOffice(jwtUser?: Record<string, unknown>): string | null {
+  if (!jwtUser) return null;
+  const office = jwtUser.office ?? jwtUser.location;
+  return typeof office === "string" && office.trim() ? office.trim() : null;
+}
+
+// Sesi app: baca profil dari JWT cookie + tabel User lokal (bukan proxy upstream).
+router.get("/auth/getUserInfo", async (req, res) => {
+  try {
+    const jwtUser = (req as express.Request & { user?: Record<string, unknown> })
+      .user;
+    const username = readJwtUsername(jwtUser);
+    if (!username) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User tidak ditemukan." });
+    }
+
+    const jwtProfile = extractAuthProfileFields(jwtUser) ?? {
+      username,
+      office: readJwtOffice(jwtUser) ?? undefined,
+    };
+
+    const synced = await syncUserProfile({
+      username,
+      office: jwtProfile.office ?? null,
+      description: jwtProfile.description ?? null,
+      mongooseId: readJwtMongooseId(jwtUser),
+    });
+
+    const payload = {
+      success: true,
+      data: {
+        username: synced.username,
+        office: synced.office ?? jwtProfile.office ?? null,
+        description: jwtProfile.description ?? null,
+        role: synced.role,
+        type: synced.type,
+      },
+    };
+
+    return res.json(mergeRoleIntoPayload(payload, synced.role));
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Gagal memuat profil user";
+    return res.status(500).json({ success: false, message });
+  }
+});
 
 // Forward semua request ke Source of Truth (SO)
 router.all(/.*/, async (req, res) => {

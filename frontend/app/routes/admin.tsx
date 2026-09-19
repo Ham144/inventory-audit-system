@@ -4,12 +4,10 @@ import {
   CheckCircle2,
   AlertTriangle,
   SlidersHorizontal,
-  Layers,
   Boxes,
   Database,
   Sparkles,
   AlertCircle,
-  UserCheck,
   MapPin,
   ChevronDown,
   ChevronRight,
@@ -40,9 +38,12 @@ import {
   resolveInitialPickedOffice,
   resolvePickedOffice,
   fetchAndCacheMappings,
+  canonicalizeLocationList,
+  toCanonicalOfficeName,
   type LocationItem,
 } from "~/libs/location";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { listUnresolvedSkus } from "~/api/skuReminder.api";
 import {
   CompareApi,
   type CompareQueryParams,
@@ -376,7 +377,7 @@ function NavRowExpandedPanel({
       className={`px-3 sm:px-4 pb-4 pt-1 bg-slate-50/60 border-t border-slate-100 ${compact ? "" : "lg:px-4"}`}
     >
       <p
-        className={`text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-3 ${compact ? "pl-0" : "pl-0 lg:pl-6"}`}
+        className={`text-[11px] font-bold uppercase tracking-wide text-slate-600 mb-3 ${compact ? "pl-0" : "pl-0 lg:pl-6"}`}
       >
         Rincian Penetapan per Rak
       </p>
@@ -520,6 +521,7 @@ function NavCompareItem({
   onFinalCorrectionRak,
   onDeleteFinalCorrection,
   isDeletingFinalCorrection,
+  periodAllowsNavCompare = true,
 }: {
   nav: ProductCompare;
   rakDetails: ScanCompareRow[];
@@ -541,11 +543,20 @@ function NavCompareItem({
   onFinalCorrectionRak: (rak: number, physicalQty: number) => void;
   onDeleteFinalCorrection: () => void;
   isDeletingFinalCorrection: boolean;
+  periodAllowsNavCompare?: boolean;
 }) {
   const delta = navDelta(nav);
   const canCompareNav =
-    nav.pendingRakCount === 0 || nav.finalCorrectionQty !== null;
+    periodAllowsNavCompare &&
+    (nav.pendingRakCount === 0 || nav.finalCorrectionQty !== null);
   const accent = navRowAccentClass(nav);
+  const compareBlockedTitle = !periodAllowsNavCompare
+    ? "Gudang masih mode Free — tekan Buka periode di Cek Selisih untuk ambil source of truth dulu"
+    : nav.status === "sesuai"
+      ? "Sudah sesuai dengan snapshot periode"
+      : !canCompareNav
+        ? "Selesaikan penetapan semua rak terlebih dahulu"
+        : "Bandingkan fisik vs systemQty hasil Buka periode";
 
   return (
     <div className="bg-white">
@@ -565,18 +576,16 @@ function NavCompareItem({
             )}
           </button>
           <div className="min-w-0 flex-1">
-            <p className="font-bold text-slate-800 text-sm leading-snug">
+            <p className="font-semibold text-slate-900 text-sm leading-snug">
               {nav.name}
             </p>
-            <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-              {nav.sku}
-            </p>
-            <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 font-mono mt-1.5 inline-block">
+            <p className="text-xs font-mono text-slate-600 mt-0.5">{nav.sku}</p>
+            <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200 font-mono mt-1.5 inline-block">
               {nav.office}
             </span>
             {nav.note?.trim() && (
               <p
-                className="text-[10px] text-amber-700 mt-1.5 line-clamp-2 leading-snug"
+                className="text-xs text-amber-800 mt-1.5 line-clamp-2 leading-snug"
                 title={nav.note}
               >
                 {nav.note}
@@ -586,27 +595,29 @@ function NavCompareItem({
         </div>
 
         <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2">
-            <p className="text-[9px] font-bold uppercase text-slate-400">
+          <div className="rounded-xl bg-slate-50 border border-slate-200 px-2 py-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               Fisik
             </p>
-            <p className="text-base font-black text-slate-800">
+            <p className="text-base font-bold text-slate-900 tabular-nums">
               {nav.physicalQty}
             </p>
             {nav.pendingRakCount > 0 && nav.finalCorrectionQty === null && (
-              <p className="text-[9px] text-amber-600 font-bold mt-0.5">
+              <p className="text-[10px] text-amber-700 font-semibold mt-0.5">
                 belum lengkap
               </p>
             )}
           </div>
-          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2">
-            <p className="text-[9px] font-bold uppercase text-slate-400">ERP</p>
-            <p className="text-base font-black text-slate-800">
-              {nav.status === "belum_compare" ? "—" : nav.systemQty}
+          <div className="rounded-xl bg-slate-50 border border-slate-200 px-2 py-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              Initial SOT
+            </p>
+            <p className="text-base font-bold text-slate-900 tabular-nums">
+              {nav.systemQty}
             </p>
           </div>
-          <div className="rounded-xl bg-slate-50 border border-slate-100 px-2 py-2 flex flex-col items-center justify-center">
-            <p className="text-[9px] font-bold uppercase text-slate-400">
+          <div className="rounded-xl bg-slate-50 border border-slate-200 px-2 py-2.5 flex flex-col items-center justify-center">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
               Selisih
             </p>
             <DeltaBadge delta={delta} />
@@ -615,7 +626,7 @@ function NavCompareItem({
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase text-slate-400">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Rak
             </span>
             <RakProgressBadge
@@ -640,16 +651,10 @@ function NavCompareItem({
             disabled={
               !canCompareNav || isComparePending || nav.status === "sesuai"
             }
-            title={
-              nav.status === "sesuai"
-                ? "Sudah sesuai dengan NAV"
-                : !canCompareNav
-                  ? "Selesaikan penetapan semua rak terlebih dahulu"
-                  : undefined
-            }
+            title={compareBlockedTitle}
             onClick={onCompareNav}
           >
-            {isComparePending ? "Memproses..." : "Compare NAV"}
+            {isComparePending ? "Memproses..." : "Cek Selisih Periode"}
           </button>
           <button
             type="button"
@@ -677,12 +682,12 @@ function NavCompareItem({
 
       {/* Desktop row */}
       <div
-        className={`hidden lg:grid grid-cols-12 py-3 px-4 items-center text-[11px] border-l-4 transition-colors hover:bg-slate-50/80 ${accent}`}
+        className={`hidden lg:grid grid-cols-12 py-3.5 px-4 items-center text-xs border-l-4 transition-colors hover:bg-slate-50 ${accent}`}
       >
         <div className="col-span-3 pr-2 flex items-start gap-2">
           <button
             type="button"
-            className="mt-0.5 shrink-0 text-slate-400 hover:text-slate-600 transition-colors"
+            className="mt-0.5 shrink-0 text-slate-500 hover:text-slate-700 transition-colors"
             onClick={onToggleExpand}
             aria-label={isExpanded ? "Tutup rincian" : "Buka rincian"}
           >
@@ -692,17 +697,17 @@ function NavCompareItem({
               <ChevronRight className="h-4 w-4" />
             )}
           </button>
-          <div>
-            <p className="font-bold text-slate-800 line-clamp-1">{nav.name}</p>
-            <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-              {nav.sku}
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 text-sm line-clamp-1">
+              {nav.name}
             </p>
-            <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 font-mono mt-1 inline-block">
+            <p className="text-xs font-mono text-slate-600 mt-0.5">{nav.sku}</p>
+            <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200 font-mono mt-1 inline-block">
               {nav.office}
             </span>
             {nav.note?.trim() && (
               <p
-                className="text-[10px] text-amber-700 mt-1 line-clamp-1"
+                className="text-xs text-amber-800 mt-1 line-clamp-1"
                 title={nav.note}
               >
                 {nav.note}
@@ -710,32 +715,32 @@ function NavCompareItem({
             )}
           </div>
         </div>
-        <div className="col-span-2 border-l border-slate-150 pl-3">
-          <span className="font-black text-slate-800 text-sm">
+        <div className="col-span-2 border-l border-slate-200 pl-3">
+          <span className="font-bold text-slate-900 text-sm tabular-nums">
             {nav.physicalQty}
           </span>
           {nav.pendingRakCount > 0 && nav.finalCorrectionQty === null && (
-            <p className="text-[10px] text-amber-600 font-bold mt-0.5">
+            <p className="text-[11px] text-amber-700 font-semibold mt-0.5">
               belum lengkap
             </p>
           )}
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3 font-black text-slate-800">
-          {nav.status === "belum_compare" ? "—" : nav.systemQty}
+        <div className="col-span-1 border-l border-slate-200 pl-3 font-bold text-slate-900 text-sm tabular-nums">
+          {nav.systemQty}
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3">
+        <div className="col-span-1 border-l border-slate-200 pl-3">
           <DeltaBadge delta={delta} />
         </div>
-        <div className="col-span-2 border-l border-slate-150 pl-3">
+        <div className="col-span-2 border-l border-slate-200 pl-3">
           <RakProgressBadge
             resolved={nav.resolvedRakCount}
             pending={nav.pendingRakCount}
           />
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3">
+        <div className="col-span-1 border-l border-slate-200 pl-3">
           <NavStatusBadge nav={nav} />
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3">
+        <div className="col-span-1 border-l border-slate-200 pl-3">
           <NavNoteButton
             sku={nav.sku}
             note={nav.note}
@@ -744,23 +749,17 @@ function NavCompareItem({
             showLabel
           />
         </div>
-        <div className="col-span-1 border-l border-slate-150 pl-3 flex flex-col gap-1">
+        <div className="col-span-1 border-l border-slate-200 pl-3 flex flex-col gap-1">
           <button
             type="button"
-            className="btn btn-xs btn-outline btn-primary w-full"
+            className="btn btn-sm h-8 min-h-8 btn-outline btn-primary w-full text-[11px]"
             disabled={
               !canCompareNav || isComparePending || nav.status === "sesuai"
             }
-            title={
-              nav.status === "sesuai"
-                ? "Sudah sesuai dengan NAV"
-                : !canCompareNav
-                  ? "Selesaikan penetapan semua rak terlebih dahulu"
-                  : undefined
-            }
+            title={compareBlockedTitle}
             onClick={onCompareNav}
           >
-            {isComparePending ? "..." : "NAV"}
+            {isComparePending ? "..." : "Cek Selisih"}
           </button>
         </div>
       </div>
@@ -1040,7 +1039,8 @@ function RakDetailRow({
 }
 
 function ScanStatusBadge({ row }: { row: ScanCompareRow }) {
-  const base = "px-2 py-0.5 rounded-full text-[10px] font-extrabold border";
+  const base =
+    "px-2 py-0.5 rounded-md text-[11px] font-bold tracking-wide border";
 
   if (!row.match && row.resolved) {
     return (
@@ -1075,7 +1075,8 @@ function ScanStatusBadge({ row }: { row: ScanCompareRow }) {
 }
 
 function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
-  const base = "px-2 py-0.5 rounded-full text-[10px] font-extrabold border";
+  const base =
+    "px-2 py-0.5 rounded-md text-[11px] font-bold tracking-wide border";
 
   if (!nav) {
     return (
@@ -1093,8 +1094,8 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
         >
           NAV SESUAI
         </span>
-        <span className="text-[10px] text-slate-500 font-mono">
-          {nav.physicalQty} / {nav.systemQty} ERP
+        <span className="text-[11px] text-slate-600 font-mono">
+          {nav.physicalQty} / {nav.systemQty} SOT
         </span>
       </div>
     );
@@ -1110,8 +1111,8 @@ function NavStatusBadge({ nav }: { nav: ProductCompare | null }) {
           NAV SELISIH ({delta >= 0 ? "+" : ""}
           {delta})
         </span>
-        <span className="text-[10px] text-slate-500 font-mono">
-          {nav.physicalQty > 0 ? nav.physicalQty : "—"} / {nav.systemQty} ERP
+        <span className="text-[11px] text-slate-600 font-mono">
+          {nav.physicalQty > 0 ? nav.physicalQty : "—"} / {nav.systemQty} SOT
         </span>
       </div>
     );
@@ -1139,10 +1140,11 @@ export default function AdminPage() {
   const officeDefaultApplied = useRef(false);
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
-  const compareOffice = compareOfficeScope(
+  const compareOfficeRaw = compareOfficeScope(
     userInfo,
     showOfficePicker ? pickedOffice : undefined,
   );
+  const compareOffice = toCanonicalOfficeName(compareOfficeRaw);
 
   useEffect(() => {
     if (
@@ -1162,6 +1164,7 @@ export default function AdminPage() {
     );
   }, [showOfficePicker, locations, userInfo]);
 
+  
   useEffect(() => {
     if (!showOfficePicker || locations.length === 0) return;
     const resolved = resolvePickedOffice(pickedOffice, locations);
@@ -1225,6 +1228,44 @@ export default function AdminPage() {
     },
     enabled: isDateRangeValid,
   });
+
+  const periodModeQuery = useQuery({
+    queryKey: ["sku-reminders", "period-mode", compareOffice],
+    queryFn: () =>
+      listUnresolvedSkus({
+        office: compareOffice,
+        mode: "unresolved",
+      }),
+    enabled:
+      Boolean(userInfo?.username) &&
+      compareOffice !== "Semua" &&
+      compareOffice.trim().length > 0,
+  });
+
+  const periodAllowsNavCompare =
+    compareOffice !== "Semua" &&
+    (periodModeQuery.data?.mode ??
+      periodModeQuery.data?.period?.mode ??
+      "FREE") === "OPNAME";
+
+  const periodClosedAt = periodModeQuery.data?.period?.closedAt ?? null;
+  const periodMode =
+    periodModeQuery.data?.mode ??
+    periodModeQuery.data?.period?.mode ??
+    "FREE";
+
+  // Setelah Tutup periode: tarik filter ke hari tutup supaya kerja lama tidak numpang di default
+  const periodFilterApplied = useRef("");
+  useEffect(() => {
+    if (compareOffice === "Semua" || !periodClosedAt) return;
+    if (periodMode !== "FREE") return;
+    const key = `${compareOffice}|${periodClosedAt}`;
+    if (periodFilterApplied.current === key) return;
+    periodFilterApplied.current = key;
+    const closedDay = periodClosedAt.slice(0, 10);
+    setDateFrom(closedDay);
+    setDateTo(defaultDateTo());
+  }, [compareOffice, periodClosedAt, periodMode]);
 
   const scanLogsAllQuery = useQuery({
     queryKey: ["opname", "scans", compareOffice, "Semua"],
@@ -1385,7 +1426,7 @@ export default function AdminPage() {
       CompareApi.checkNavItem(compareItemId),
     onSuccess: () => {
       invalidateCompareQueries();
-      showToast("Compare NAV selesai", "success");
+      showToast("Cek selisih periode selesai", "success");
     },
     onError: (err) => {
       showToast(JSON.stringify(err), "warning");
@@ -1473,7 +1514,7 @@ export default function AdminPage() {
       try {
         await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
-        setLocations(normalizeLocationList(res));
+        setLocations(canonicalizeLocationList(normalizeLocationList(res)));
       } catch {
         setLocations([]);
       } finally {
@@ -1493,6 +1534,14 @@ export default function AdminPage() {
 
   const runBulkCompareNav = async () => {
     if (isBulkComparing) return;
+
+    if (!periodAllowsNavCompare) {
+      showToast(
+        "Gudang masih mode Free. Buka periode di Cek Selisih untuk ambil source of truth dulu.",
+        "warning",
+      );
+      return;
+    }
 
     const rangeErr = resolveDateRangeError(dateFrom, dateTo);
     if (rangeErr) {
@@ -1613,6 +1662,15 @@ export default function AdminPage() {
 
   // Manual Trigger to Sync system stock with ERP / SOT
   const fetchQuantitiesFromSoT = async (forceToast = false) => {
+    if (!periodAllowsNavCompare) {
+      if (forceToast) {
+        showToast(
+          "Gudang masih mode Free. Buka periode di Cek Selisih dulu.",
+          "warning",
+        );
+      }
+      return;
+    }
     setIsSyncingWithSoT(true);
     try {
       const res = await axiosInstance.post("/so/api/opname/sync", {
@@ -1672,43 +1730,35 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-slate-100 selection:text-slate-900">
-      {/* Subtle Dot Grid Background */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-size-[4rem_4rem] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-40 z-0" />
+    <div className="min-h-screen bg-[#f4f6f9] text-slate-900 flex flex-col font-sans selection:bg-sky-100 selection:text-slate-900">
+      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(14,165,233,0.08),transparent),linear-gradient(to_right,#e8edf4_1px,transparent_1px),linear-gradient(to_bottom,#e8edf4_1px,transparent_1px)] bg-size-[auto,3.5rem_3.5rem,3.5rem_3.5rem] opacity-70" />
 
-      {/* ==========================================
-          HEADER SECTION ( Frosted White Glass )
-          ========================================== */}
-      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl sticky top-0 z-30 px-3 sm:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm shadow-slate-100/50">
+      <header className="sticky top-0 z-30 border-b border-slate-200/90 bg-white/90 backdrop-blur-xl px-3 sm:px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-[0_1px_0_0_rgba(15,23,42,0.04)]">
         <div className="flex items-center gap-3">
-          <div className="p-1 rounded-md bg-linear-to-tr from-slate-500  shadow-slate-500/10 ring-1 ring-white">
-            <img src="/logo.png" alt="logo" width={40} height={40} />
+          <div className="rounded-xl bg-white p-1 ring-1 ring-slate-200 shadow-sm">
+            <img
+              src="/logo.png"
+              alt="Stok Opname CSI"
+              width={40}
+              height={40}
+              className="rounded-lg"
+            />
           </div>
           <div>
-            <h1 className="text-xl font-extrabold tracking-tight  flex items-center gap-2">
-              Stok Opname{" "}
-              <h4 className="text-base">
-                <span className="badge badge-sm bg-slate-500 text-white">
-                  BETA
-                </span>
-              </h4>
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+              Stok Opname
+              <span className="inline-flex items-center rounded-md bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                Beta
+              </span>
             </h1>
-            <p className="text-xs text-slate-500 font-semibold">
-              Reconciliation Dashboard & Audit Control Room
+            <p className="text-xs sm:text-sm text-slate-600 font-medium">
+              Dashboard rekonsiliasi & audit stok
             </p>
           </div>
         </div>
 
-        {/* Global Toolbar */}
         <div className="flex flex-wrap items-center gap-3 self-stretch md:self-auto">
           <AppNavigation className="max-w-full" />
-
-          <div className="hidden sm:block h-6 w-px bg-slate-200" />
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold tracking-wider uppercase border border-emerald-200 shadow-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
-            Live Sync
-          </span>
-
           <UserSessionBadge />
         </div>
       </header>
@@ -1749,89 +1799,74 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ==========================================
-          METRICS & ANALYTICS BAR ( Clean White Cards )
-          ========================================== */}
-      <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Metric 1 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
-          <div className="absolute top-0 right-0 h-16 w-16 bg-slate-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+      <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3.5 flex items-center justify-between shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-slate-300">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">
               Total SKU / Lokasi
             </span>
-            <span className="text-2xl font-black tracking-tight text-slate-800">
+            <span className="text-2xl font-bold tracking-tight text-slate-900 tabular-nums">
               {stats.totalSkuLocation}{" "}
-              <span className="text-xs font-medium text-slate-400">item</span>
+              <span className="text-xs font-medium text-slate-500">item</span>
             </span>
           </div>
-          <div className="p-3 bg-slate-50 text-slate-600 rounded-2xl border border-slate-100">
+          <div className="hidden sm:flex p-2.5 bg-slate-100 text-slate-600 rounded-xl shrink-0">
             <Boxes className="h-5 w-5" />
           </div>
         </div>
 
-        {/* Metric 2 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
-          <div className="absolute top-0 right-0 h-16 w-16 bg-red-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3.5 flex items-center justify-between shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-rose-200">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">
               Rak Pending
             </span>
-            <span className="text-2xl font-black tracking-tight text-red-500">
+            <span className="text-2xl font-bold tracking-tight text-rose-600 tabular-nums">
               {stats.rakPending}{" "}
-              <span className="text-xs font-medium text-red-400">rak</span>
+              <span className="text-xs font-medium text-rose-500/80">rak</span>
             </span>
           </div>
-          <div className="p-3 bg-red-50 text-red-600 rounded-2xl border border-red-100">
+          <div className="hidden sm:flex p-2.5 bg-rose-50 text-rose-600 rounded-xl shrink-0">
             <AlertTriangle className="h-5 w-5" />
           </div>
         </div>
 
-        {/* Metric 3 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
-          <div className="absolute top-0 right-0 h-16 w-16 bg-amber-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3.5 flex items-center justify-between shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-amber-200">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">
               NAV Selisih
             </span>
-            <span className="text-2xl font-black tracking-tight text-amber-500">
+            <span className="text-2xl font-bold tracking-tight text-amber-600 tabular-nums">
               {stats.navSelisih}{" "}
-              <span className="text-xs font-medium text-amber-400">erp</span>
+              <span className="text-xs font-medium text-amber-500/80">erp</span>
             </span>
           </div>
-          <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
+          <div className="hidden sm:flex p-2.5 bg-amber-50 text-amber-600 rounded-xl shrink-0">
             <Database className="h-5 w-5" />
           </div>
         </div>
 
-        {/* Metric 4 */}
-        <div className="bg-white border border-slate-200/85 rounded-2xl p-4.5 flex items-center justify-between shadow-sm relative overflow-hidden group hover:border-slate-300/80 transition-all duration-200 max-md:max-h-15 max-md:min-w-30">
-          <div className="absolute top-0 right-0 h-16 w-16 bg-emerald-500/5 rounded-bl-full transform translate-x-2 -translate-y-2 group-hover:scale-125 transition-transform duration-300" />
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+        <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3.5 flex items-center justify-between shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-emerald-200">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wide">
               NAV Sesuai
             </span>
-            <span className="text-2xl font-black tracking-tight text-emerald-600">
+            <span className="text-2xl font-bold tracking-tight text-emerald-600 tabular-nums">
               {stats.navSesuai}{" "}
-              <span className="text-xs font-medium text-slate-400">sku</span>
+              <span className="text-xs font-medium text-emerald-600/70">sku</span>
             </span>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
+          <div className="hidden sm:flex p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
             <CheckCircle2 className="h-5 w-5" />
           </div>
         </div>
       </section>
 
-      {/* ==========================================
-          CONTROL BAR & FILTERS PANEL
-          ========================================== */}
-      <section className="relative z-10 px-3 sm:px-6 pt-4 sm:pt-6">
-        <div className="bg-white border border-slate-200/85 rounded-2xl sm:rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
-          {/* Baris 1: filter server */}
+      <section className="relative z-10 px-3 sm:px-6 pt-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3 sm:gap-4">
             <div className="flex flex-col gap-1.5 w-full sm:min-w-45 sm:w-auto">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <MapPin className="h-3 w-3 text-slate-500" />
+              <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-500" />
                 Wilayah / Gudang
               </label>
               {showOfficePicker ? (
@@ -1844,7 +1879,7 @@ export default function AdminPage() {
                     setSelectedRak("Semua");
                   }}
                   disabled={isLoadingLocations}
-                  className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
+                  className="select select-bordered select-sm w-full bg-white border-slate-200 text-slate-800 font-medium"
                 >
                   {isLoadingLocations ? (
                     <option value="Semua">Memuat wilayah...</option>
@@ -1860,7 +1895,7 @@ export default function AdminPage() {
                   )}
                 </select>
               ) : (
-                <div className="select select-bordered select-sm w-full bg-slate-50 font-semibold flex items-center px-3">
+                <div className="select select-bordered select-sm w-full bg-slate-50 border-slate-200 text-slate-800 font-medium flex items-center px-3">
                   {isAdmin(userInfo) || compareOffice === "Semua"
                     ? "Semua Wilayah"
                     : compareOffice || "—"}
@@ -1869,14 +1904,14 @@ export default function AdminPage() {
             </div>
 
             <div className="flex flex-col gap-1.5 w-full sm:min-w-35 sm:w-auto">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <SlidersHorizontal className="h-3 w-3 text-slate-500" />
+              <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
                 Nomor Rak
               </label>
               <select
                 value={selectedRak}
                 onChange={(e) => setSelectedRak(e.target.value)}
-                className="select select-bordered select-sm w-full bg-slate-50 font-semibold"
+                className="select select-bordered select-sm w-full bg-white border-slate-200 text-slate-800 font-medium"
               >
                 <option value="Semua">Semua Rak</option>
                 {uniqueRaks.map((rakNo) => (
@@ -1888,8 +1923,8 @@ export default function AdminPage() {
             </div>
 
             <div className="flex flex-col gap-1.5 w-full sm:flex-1 sm:min-w-50">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Search className="h-3 w-3 text-slate-500" />
+              <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                <Search className="h-3.5 w-3.5 text-slate-500" />
                 Cari SKU / Nama
               </label>
               <div className="relative">
@@ -1898,7 +1933,7 @@ export default function AdminPage() {
                   placeholder="Cari SKU atau nama barang..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="input input-bordered input-sm w-full pl-9 bg-slate-50 font-medium"
+                  className="input input-bordered input-sm w-full pl-9 bg-white border-slate-200 text-slate-800 font-medium placeholder:text-slate-400"
                 />
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                 {searchTerm && (
@@ -1915,8 +1950,8 @@ export default function AdminPage() {
             </div>
 
             <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Calendar className="h-3 w-3 text-slate-500" />
+              <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 text-slate-500" />
                 Tanggal Scan
               </label>
               <div className="flex items-center gap-2">
@@ -1925,9 +1960,9 @@ export default function AdminPage() {
                   value={dateFrom}
                   max={dateTo || undefined}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className={`input input-bordered input-sm bg-slate-50 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
+                  className={`input input-bordered input-sm bg-white border-slate-200 text-slate-800 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
                 />
-                <span className="text-[10px] text-slate-400 font-bold shrink-0">
+                <span className="text-xs text-slate-500 font-semibold shrink-0">
                   s/d
                 </span>
                 <input
@@ -1935,20 +1970,18 @@ export default function AdminPage() {
                   value={dateTo}
                   min={dateFrom || undefined}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className={`input input-bordered input-sm bg-slate-50 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
+                  className={`input input-bordered input-sm bg-white border-slate-200 text-slate-800 font-medium w-35 ${dateRangeError ? "input-error" : ""}`}
                 />
               </div>
               {dateRangeError && (
-                <p className="text-[10px] text-red-500 font-semibold">
-                  {dateRangeError}
-                </p>
+                <p className="text-xs text-red-600 font-medium">{dateRangeError}</p>
               )}
             </div>
 
             {hasActiveFilters && (
               <button
                 type="button"
-                className="btn btn-ghost btn-sm gap-1.5 text-slate-600"
+                className="btn btn-ghost btn-sm gap-1.5 text-slate-700"
                 onClick={resetFilters}
               >
                 <RotateCcw className="h-3.5 w-3.5" />
@@ -1957,9 +1990,8 @@ export default function AdminPage() {
             )}
           </div>
 
-          {/* Baris 2: filter client */}
-          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-slate-100">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider shrink-0">
+          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100">
+            <span className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide shrink-0">
               Status NAV
             </span>
             <div className="flex flex-wrap gap-1.5">
@@ -1967,10 +1999,10 @@ export default function AdminPage() {
                 <button
                   key={value}
                   type="button"
-                  className={`btn btn-xs rounded-full ${
+                  className={`btn btn-sm h-8 min-h-8 rounded-lg text-xs font-semibold ${
                     navStatusFilter === value
                       ? "btn-primary"
-                      : "btn-ghost border border-slate-200"
+                      : "btn-ghost border border-slate-200 text-slate-700 hover:bg-slate-50"
                   }`}
                   onClick={() => setNavStatusFilter(value)}
                 >
@@ -1982,13 +2014,13 @@ export default function AdminPage() {
             <div className="h-5 w-px bg-slate-200 hidden sm:block" />
 
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider shrink-0">
+              <label className="text-[11px] text-slate-600 font-semibold uppercase tracking-wide shrink-0">
                 Urutkan
               </label>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortBy)}
-                className="select select-bordered select-xs bg-slate-50 font-semibold"
+                className="select select-bordered select-sm bg-white border-slate-200 text-slate-800 font-medium"
               >
                 {SORT_OPTIONS.map(({ value, label }) => (
                   <option key={value} value={value}>
@@ -2001,22 +2033,19 @@ export default function AdminPage() {
         </div>
       </section>
 
-      {/* ==========================================
-          MAIN AREA: NAV-CENTRIC COMPARE
-          ========================================== */}
-      <main className="relative z-10 flex-1 px-3 sm:px-6 py-4 sm:py-6">
-        <section className="bg-white/95 border border-slate-200 rounded-2xl sm:rounded-3xl flex flex-col overflow-hidden shadow-sm lg:max-h-[65vh]">
-          <div className="p-3 sm:p-4 border-b border-slate-150 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-            <div>
-              <p className="text-xs font-bold text-slate-600">
+      <main className="relative z-10 flex-1 px-3 sm:px-6 py-4 sm:py-5">
+        <section className="bg-white border border-slate-200 rounded-2xl flex flex-col overflow-hidden shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:h-[min(68vh,720px)]">
+          <div className="shrink-0 p-3.5 sm:p-4 border-b border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-900">
                 Perbandingan NAV (per SKU + Lokasi)
               </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
                 Total fisik = jumlah qty ditetapkan per rak. Tetapkan qty
                 operator di rincian rak.
               </p>
               {isDateRangeValid && (
-                <p className="text-[10px] text-slate-600 font-bold mt-1">
+                <p className="text-xs text-slate-700 font-semibold mt-1.5">
                   Scan {dateFrom} s/d {dateTo} · {filteredNavRows.length} SKU
                   {hasActiveFilters &&
                   navCompareRows.length > filteredNavRows.length
@@ -2028,14 +2057,14 @@ export default function AdminPage() {
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <button
                 type="button"
-                className="btn btn-ghost btn-xs"
+                className="btn btn-ghost btn-sm text-slate-700"
                 onClick={expandAllRows}
               >
                 Buka semua
               </button>
               <button
                 type="button"
-                className="btn btn-ghost btn-xs"
+                className="btn btn-ghost btn-sm text-slate-700"
                 onClick={collapseAllRows}
               >
                 Tutup semua
@@ -2044,8 +2073,16 @@ export default function AdminPage() {
                 type="button"
                 className="btn btn-secondary btn-sm gap-1.5"
                 onClick={runBulkCompareNav}
-                disabled={!isDateRangeValid || isBulkComparing}
-                title={dateRangeError ?? undefined}
+                disabled={
+                  !isDateRangeValid ||
+                  isBulkComparing ||
+                  !periodAllowsNavCompare
+                }
+                title={
+                  !periodAllowsNavCompare
+                    ? "Gudang masih mode Free — tekan Buka periode untuk ambil source of truth dulu"
+                    : (dateRangeError ?? undefined)
+                }
               >
                 {isBulkComparing ? (
                   <>
@@ -2057,13 +2094,13 @@ export default function AdminPage() {
                 ) : (
                   <>
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    Bulk Compare
+                    Bulk Cek Periode
                   </>
                 )}
               </button>
               <button
                 type="button"
-                className="btn btn-outline btn-sm gap-1.5 border-slate-300 text-slate-700 hover:bg-slate-100"
+                className="btn btn-outline btn-sm gap-1.5 border-slate-300 text-slate-700 hover:bg-slate-50"
                 onClick={exportToCsv}
                 disabled={
                   !isDateRangeValid ||
@@ -2076,7 +2113,7 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                className="btn bg-slate-400 btn-sm gap-1.5"
+                className="btn btn-neutral btn-sm gap-1.5"
                 onClick={() => refreshScanCompare()}
                 disabled={scanCompareQuery.isFetching}
               >
@@ -2088,53 +2125,51 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="overflow-y-auto flex-1 lg:max-h-[75vh]">
-            {/* Desktop table header */}
-            <div className="hidden lg:block min-w-225">
-              <div className="grid grid-cols-12 bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500 py-3 px-4 sticky top-0 z-10">
-                <div className="col-span-3">Info Barang</div>
-                <div className="col-span-2 border-l border-slate-200 pl-3">
-                  Fisik (sum)
-                </div>
-                <div className="col-span-1 border-l border-slate-200 pl-3">
-                  ERP
-                </div>
-                <div className="col-span-1 border-l border-slate-200 pl-3">
-                  Selisih
-                </div>
-                <div className="col-span-2 border-l border-slate-200 pl-3">
-                  Rak
-                </div>
-                <div className="col-span-1 border-l border-slate-200 pl-3">
-                  Status NAV
-                </div>
-                <div className="col-span-1 border-l border-slate-200 pl-3">
-                  Catatan
-                </div>
-                <div className="col-span-1 border-l border-slate-200 pl-3">
-                  NAV
-                </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {/* Sticky header must be a direct sibling of rows inside the scroll container */}
+            <div className="hidden lg:grid grid-cols-12 sticky top-0 z-20 min-w-225 bg-slate-100/95 backdrop-blur-sm border-b border-slate-200 text-[11px] font-bold uppercase tracking-wide text-slate-700 py-3 px-4 shadow-[0_1px_0_0_rgba(15,23,42,0.06)]">
+              <div className="col-span-3">Info Barang</div>
+              <div className="col-span-2 border-l border-slate-300/70 pl-3">
+                Fisik (sum)
+              </div>
+              <div className="col-span-1 border-l border-slate-300/70 pl-3">
+                Initial SOT
+              </div>
+              <div className="col-span-1 border-l border-slate-300/70 pl-3">
+                Selisih
+              </div>
+              <div className="col-span-2 border-l border-slate-300/70 pl-3">
+                Rak
+              </div>
+              <div className="col-span-1 border-l border-slate-300/70 pl-3">
+                Status NAV
+              </div>
+              <div className="col-span-1 border-l border-slate-300/70 pl-3">
+                Catatan
+              </div>
+              <div className="col-span-1 border-l border-slate-300/70 pl-3">
+                NAV
               </div>
             </div>
 
-            <div className="divide-y divide-slate-150 lg:min-w-225">
+            <div className="divide-y divide-slate-100 lg:min-w-225">
               {navCompareQuery.isLoading ? (
                 <NavTableSkeleton />
               ) : dateRangeError ? (
-                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-400">
-                  <AlertTriangle className="h-12 w-12 text-red-200 mb-3" />
-                  <p className="text-sm font-bold text-slate-700">
+                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-500">
+                  <AlertTriangle className="h-12 w-12 text-red-300 mb-3" />
+                  <p className="text-sm font-bold text-slate-800">
                     Rentang tanggal tidak valid
                   </p>
-                  <p className="text-xs text-red-500 mt-1">{dateRangeError}</p>
+                  <p className="text-xs text-red-600 mt-1">{dateRangeError}</p>
                 </div>
               ) : navCompareQuery.isError ? (
-                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-400">
-                  <AlertTriangle className="h-12 w-12 text-red-200 mb-3" />
-                  <p className="text-sm font-bold text-slate-700">
+                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-500">
+                  <AlertTriangle className="h-12 w-12 text-red-300 mb-3" />
+                  <p className="text-sm font-bold text-slate-800">
                     Gagal memuat data perbandingan
                   </p>
-                  <p className="text-xs text-red-500 mt-1">
+                  <p className="text-xs text-red-600 mt-1">
                     {extractApiError(
                       navCompareQuery.error,
                       "Gagal memuat data perbandingan",
@@ -2142,14 +2177,14 @@ export default function AdminPage() {
                   </p>
                 </div>
               ) : filteredNavRows.length === 0 ? (
-                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-400">
+                <div className="flex flex-col items-center justify-center text-center p-12 text-slate-500">
                   {navCompareRows.length > 0 ? (
                     <>
-                      <SlidersHorizontal className="h-12 w-12 text-slate-200 mb-3" />
-                      <p className="text-sm font-bold text-slate-700">
+                      <SlidersHorizontal className="h-12 w-12 text-slate-300 mb-3" />
+                      <p className="text-sm font-bold text-slate-800">
                         Tidak ada hasil untuk filter ini
                       </p>
-                      <p className="text-xs text-slate-400 mt-1 mb-4">
+                      <p className="text-xs text-slate-600 mt-1 mb-4">
                         Coba ubah filter status, rak, tanggal, atau kata kunci
                         pencarian
                       </p>
@@ -2164,11 +2199,11 @@ export default function AdminPage() {
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="h-12 w-12 text-slate-200 mb-3" />
-                      <p className="text-sm font-bold text-slate-700">
+                      <CheckCircle2 className="h-12 w-12 text-slate-300 mb-3" />
+                      <p className="text-sm font-bold text-slate-800">
                         Tidak ada scan dalam rentang tanggal ini
                       </p>
-                      <p className="text-xs text-slate-400 mt-1">
+                      <p className="text-xs text-slate-600 mt-1">
                         Ubah rentang tanggal atau mulai scan di halaman Input
                         Barang
                       </p>
@@ -2196,6 +2231,7 @@ export default function AdminPage() {
                         checkNavMutation.isPending &&
                         checkNavMutation.variables === nav.id
                       }
+                      periodAllowsNavCompare={periodAllowsNavCompare}
                       onSaveNote={(note) =>
                         saveNoteMutation.mutate({ id: nav.id, note })
                       }
@@ -2248,14 +2284,11 @@ export default function AdminPage() {
         </section>
       </main>
 
-      {/* ==========================================
-          FOOTER
-          ========================================== */}
-      <footer className="relative z-10 border-t border-slate-200/80 bg-white/40 px-6 py-4 flex items-center justify-between text-xs text-black font-medium mt-auto">
+      <footer className="relative z-10 border-t border-slate-200 bg-white/70 px-6 py-3.5 flex items-center justify-between text-xs text-slate-600 font-medium mt-auto">
         <p>&copy; 2026 CSI Stok Opname System. All rights reserved.</p>
-        <p className="flex items-center gap-1">
-          <Sparkles className="h-3.5 w-3.5 text-slate-500 animate-pulse" />
-          Designed with Premium Performance
+        <p className="flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-sky-500" />
+          Audit Control
         </p>
       </footer>
     </div>

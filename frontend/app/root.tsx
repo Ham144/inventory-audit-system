@@ -5,12 +5,16 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
+  useNavigate,
 } from "react-router";
 
 import type { Route } from "./+types/root";
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
+  { rel: "icon", href: "/logo.png", type: "image/png" },
+  { rel: "apple-touch-icon", href: "/logo.png" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -43,80 +47,75 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 import { useEffect } from "react";
 import { useUserInfo } from "./store";
-import { getUserInfo } from "./api/authApi";
-import { syncAppUser, getAppUser } from "./api/opnameUserApi";
-import { parseAuthProfile, resolveUserRole } from "./libs/auth-profile";
+import { bootstrapSession } from "./libs/session-bootstrap";
 import { applyStoredTheme } from "./libs/app-prefs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const queryClient = new QueryClient();
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { userInfo, authChecked } = useUserInfo();
+
+  useEffect(() => {
+    if (!authChecked) return;
+    const isLoginPage = location.pathname === "/login";
+    if (!userInfo?.username && !isLoginPage) {
+      navigate("/login", { replace: true });
+    }
+  }, [authChecked, userInfo?.username, location.pathname, navigate]);
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <span className="loading loading-spinner loading-lg text-slate-500" />
+      </div>
+    );
+  }
+
+  return children;
+}
+
 export default function App() {
   const setUserInfo = useUserInfo((state) => state.setUserInfo);
+  const clearUserInfo = useUserInfo((state) => state.clearUserInfo);
+  const setAuthChecked = useUserInfo((state) => state.setAuthChecked);
 
   useEffect(() => {
     applyStoredTheme();
   }, []);
 
   useEffect(() => {
-    const fetchUser = async () => {
+    let cancelled = false;
+
+    const restoreSession = async () => {
       try {
-        const res = await getUserInfo();
-        if (!res) {
-          setUserInfo(null);
-          return;
-        }
-
-        const profile = parseAuthProfile(res);
-        if (!profile) {
-          setUserInfo(null);
-          return;
-        }
-
-        try {
-          const synced = await syncAppUser({
-            office: profile.office,
-            description: profile.description,
-          });
-          const rawOffice = synced.office ?? profile.office;
-          const cleanOffice = parseAuthProfile({ office: rawOffice })?.office ?? null;
-          setUserInfo({
-            username: profile.username,
-            office: cleanOffice,
-            description: profile.description ?? undefined,
-            role: resolveUserRole(profile, synced.role),
-          });
-        } catch {
-          try {
-            const appUser = await getAppUser();
-            const rawOffice = appUser.office ?? profile.office;
-            const cleanOffice = parseAuthProfile({ office: rawOffice })?.office ?? null;
-            setUserInfo({
-              username: profile.username,
-              office: cleanOffice,
-              description: profile.description ?? undefined,
-              role: resolveUserRole(profile, appUser.role),
-            });
-          } catch {
-            setUserInfo({
-              username: profile.username,
-              office: profile.office,
-              description: profile.description ?? undefined,
-              role: resolveUserRole(profile),
-            });
-          }
+        const restored = await bootstrapSession();
+        if (cancelled) return;
+        if (restored) {
+          setUserInfo(restored);
+        } else {
+          clearUserInfo();
         }
       } catch {
-        // user belum login atau sesi habis
-        setUserInfo(null);
+        if (!cancelled) clearUserInfo();
+      } finally {
+        if (!cancelled) setAuthChecked(true);
       }
     };
-    fetchUser();
-  }, [setUserInfo]);
+
+    restoreSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [setUserInfo, clearUserInfo, setAuthChecked]);
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <AuthGate>
+        <Outlet />
+      </AuthGate>
     </QueryClientProvider>
   );
 }
@@ -132,7 +131,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       error.status === 404
         ? "The requested page could not be found."
         : error.statusText || details;
-  } else if (import.meta.env.DEV && error && error instanceof Error) {
+  } else if (import.meta.env.DEV && error && error instanceof Error) { 
     details = error.message;
     stack = error.stack;
   }

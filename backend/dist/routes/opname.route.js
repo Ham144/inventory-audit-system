@@ -1,13 +1,18 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapLocationToOfficeAsync, mapOfficeToLocation, resolveOfficeName, } from "../utils/office-mapping.js";
-import { reconcileApprovalAfterGroupChange, deleteScanQtyApprovals, toScanGroups, readOffice, } from "../utils/scan-approval.js";
-import { assertScanAccess, isOwner, canAccessAdmin, readJwtUsername, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
-import { listUsers, syncUserProfile, updateUserRole, updateUserOffice, deleteUser, upsertUser, } from "../utils/user-store.js";
+import { mapLocationToOfficeAsync, mapOfficeToLocation, resolveLocationCode, resolveOfficeName, } from "../utils/office-mapping.js";
+import { reconcileApprovalAfterGroupChange, deleteScanQtyApprovals, toScanGroups, readOffice, sumApprovedQtyForSkuLocation, } from "../utils/scan-approval.js";
+import { assertScanAccess, isOwner, canAccessAdmin, readJwtUsername, readJwtMongooseId, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
+import { listUsers, syncUserProfile, updateUserRole, updateUserOffice, deleteUser, upsertUser, findUserByUsername, } from "../utils/user-store.js";
 import { parseCatalogList, resolveStockQty, toCompareItemSeed, } from "../types/catalog.js";
 import { filterHiddenProducts, isHiddenProductSku, } from "../utils/product-filter.js";
+import { getReusableApiBase, getReusableApiHeaders, } from "../utils/reusable-api.js";
+import { getOfficePeriodMode } from "../utils/office-period-store.js";
+import { checkStockOne, isSoapStockConfigured, } from "../soaps/stock-soap.js";
+import { isSkuLockedAsSesuai } from "../utils/compare-sesuai.js";
 import { traceInput } from "./trace.router.js";
+import { markSkuReminderResolved } from "./sku-reminder.router.js";
 const router = express.Router();
 router.get("/me", async (req, res) => {
     try {
@@ -28,10 +33,12 @@ router.post("/me/sync", async (req, res) => {
             return res.status(401).json({ message: "Unauthorized" });
         }
         const { office, description } = req.body;
+        const mongooseId = readJwtMongooseId(req.user);
         const user = await syncUserProfile({
             username,
             office: office?.trim() || null,
             description: description?.trim() || null,
+            mongooseId: mongooseId || null,
         });
         return res.json(user);
     }
@@ -42,7 +49,7 @@ router.post("/me/sync", async (req, res) => {
 router.get("/users", async (req, res) => {
     try {
         const appUser = await resolveAppUser(req);
-        if (!canAccessAdmin(appUser)) {
+        if (appUser?.role != "admin" && appUser?.role != "owner") {
             return res.status(403).json({ message: "Akses ditolak" });
         }
         const users = await listUsers();
@@ -58,6 +65,11 @@ router.patch("/users/:username/role", async (req, res) => {
         console.log("DEBUG ROLE PATCH: appUser =", appUser, "isOwner =", isOwner(appUser));
         if (!canAccessAdmin(appUser)) {
             return res.status(403).json({ message: "Akses ditolak" });
+        }
+        if (!isOwner(appUser)) {
+            return res
+                .status(403)
+                .json({ message: "Akses ditolak. Hanya owner yang dapat mengubah role." });
         }
         const targetUsername = req.params.username?.trim();
         if (!targetUsername) {
@@ -126,7 +138,7 @@ function buildForwardHeaders(req) {
             headers[key] = value.join("; ");
         }
     }
-    return headers;
+    return getReusableApiHeaders(headers);
 }
 router.delete("/users/:username", async (req, res) => {
     try {
@@ -147,9 +159,13 @@ router.delete("/users/:username", async (req, res) => {
         // 1. Cari Mongo ObjectId (_id) user di backend external
         let externalId = targetUsername;
         let userExistsOnExternal = true;
-        if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
+        const existingUser = await findUserByUsername(targetUsername);
+        if (existingUser?.mongooseId) {
+            externalId = existingUser.mongooseId;
+        }
+        else if (!/^[0-9a-fA-F]{24}$/.test(targetUsername)) {
             try {
-                const searchRes = await axios.get(`${databaseCenter()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`, { headers, validateStatus: () => true });
+                const searchRes = await axios.get(`${databaseReusableApi()}/api/auth/searchAccount?username=${encodeURIComponent(targetUsername)}`, { headers, validateStatus: () => true });
                 if (searchRes.status === 404) {
                     userExistsOnExternal = false;
                 }
@@ -176,7 +192,7 @@ router.delete("/users/:username", async (req, res) => {
                 }
                 // Jika searchAccount belum mendapatkan 24-char ObjectId, coba getAllAccount
                 if (!/^[0-9a-fA-F]{24}$/.test(externalId)) {
-                    const allRes = await axios.get(`${databaseCenter()}/api/auth/getAllAccount`, { headers, validateStatus: () => true });
+                    const allRes = await axios.get(`${databaseReusableApi()}/api/auth/getAllAccount`, { headers, validateStatus: () => true });
                     if (allRes.status >= 200 && allRes.status < 300) {
                         const rawAll = allRes.data;
                         const allList = Array.isArray(rawAll)
@@ -215,7 +231,7 @@ router.delete("/users/:username", async (req, res) => {
                     message: `Gagal menghapus user: MongoDB _id tidak ditemukan untuk user "${targetUsername}" di server external.`,
                 });
             }
-            const deleteExtRes = await axios.delete(`${databaseCenter()}/api/auth/deleteAppUser/${externalId}`, { headers, validateStatus: () => true });
+            const deleteExtRes = await axios.delete(`${databaseReusableApi()}/api/auth/deleteAppUser/${externalId}`, { headers, validateStatus: () => true });
             const isSuccessStatus = deleteExtRes.status >= 200 && deleteExtRes.status < 300;
             const isBodySuccess = deleteExtRes.data?.success !== false;
             // CRITICAL: Jika external backend gagal, BATALKAN PENGHAPUSAN LOKAL dan return error!
@@ -223,7 +239,9 @@ router.delete("/users/:username", async (req, res) => {
                 const extMsg = deleteExtRes.data?.message ||
                     deleteExtRes.data?.error ||
                     `Status HTTP ${deleteExtRes.status}`;
-                return res.status(deleteExtRes.status >= 400 ? deleteExtRes.status : 500).json({
+                return res
+                    .status(deleteExtRes.status >= 400 ? deleteExtRes.status : 500)
+                    .json({
                     message: `Gagal menghapus user di server external: ${extMsg}`,
                 });
             }
@@ -245,7 +263,7 @@ router.post("/users/sync-non-ad", async (req, res) => {
         if (!canAccessAdmin(appUser)) {
             return res.status(403).json({ message: "Akses ditolak" });
         }
-        const { username, role, office } = req.body;
+        const { username, role, office, mongooseId } = req.body;
         if (!username?.trim()) {
             return res.status(400).json({ message: "Username wajib diisi" });
         }
@@ -254,6 +272,7 @@ router.post("/users/sync-non-ad", async (req, res) => {
             role: role ?? "operator",
             office: office ?? null,
             type: "app",
+            mongooseId: mongooseId ?? null,
         });
         return res.json(updated);
     }
@@ -261,12 +280,12 @@ router.post("/users/sync-non-ad", async (req, res) => {
         return res.status(500).json({ error: errorMessage(error) });
     }
 });
-const databaseCenter = () => process.env.DATABASE_REUSABLE_API ?? "http://192.168.169.12:7047";
+const databaseReusableApi = () => getReusableApiBase();
 function errorMessage(error) {
     return error instanceof Error ? error.message : "Unknown error";
 }
 async function fetchCatalogProducts() {
-    const response = await axios.get(`${databaseCenter()}/api/v1/product/list?limit=50`);
+    const response = await axios.get(`${databaseReusableApi()}/api/v1/product/list?limit=50`, { headers: getReusableApiHeaders() });
     return filterHiddenProducts(parseCatalogList(response.data));
 }
 // Tambahkan parameter opsional 'tx' dengan tipe data Prisma.TransactionClient atau any
@@ -378,7 +397,8 @@ router.post("/session/create", async (req, res) => {
 router.post("/scan", async (req, res) => {
     try {
         const appUser = await resolveAppUser(req);
-        const { sku, name, rak, qty, office } = req.body;
+        const { sku: rawSku, name, rak, qty, office } = req.body;
+        const sku = (rawSku ?? "").trim();
         const access = assertScanAccess(appUser, office);
         if (!access.ok) {
             return res.status(access.status).json({ message: access.message });
@@ -410,6 +430,20 @@ router.post("/scan", async (req, res) => {
             await updateUserOffice(operator, loc);
         }
         const session = await getOrCreateActiveSession(loc);
+        const compareItem = await prisma.compareItem.findUnique({
+            where: {
+                sessionId_sku: {
+                    sessionId: session.id,
+                    sku,
+                },
+            },
+        });
+        if (await isSkuLockedAsSesuai(compareItem, loc)) {
+            return res.status(400).json({
+                message: "sku untuk warehouse ini sudah sesuai dengan nav",
+                error: "sku untuk warehouse ini sudah sesuai dengan nav",
+            });
+        }
         const rakNum = Number(rak) || 1;
         const qtyNum = Number(qty) || 0;
         const existing = await prisma.scanLog.findFirst({
@@ -449,6 +483,31 @@ router.post("/scan", async (req, res) => {
             sku,
             rak: rakNum,
         });
+        await markSkuReminderResolved(sku, loc);
+        // Initial SOT: mode OPNAME → SKU baru (atau belum punya SOT) diisi SOAP otomatis
+        const periodMode = await getOfficePeriodMode(loc);
+        let sotQty = compareItem?.systemQty ?? 0;
+        let needsSotFill = periodMode === "OPNAME" &&
+            isSoapStockConfigured() &&
+            (!compareItem || compareItem.status === "BELUM_COMPARE");
+        if (needsSotFill) {
+            try {
+                const locationCode = (await resolveLocationCode(loc)) ?? (await mapOfficeToLocation(loc));
+                if (locationCode) {
+                    sotQty = await checkStockOne(sku, locationCode);
+                }
+            }
+            catch (err) {
+                console.error("[opname] SOAP Initial SOT on scan failed:", errorMessage(err));
+                needsSotFill = false;
+            }
+        }
+        const approvedAfterScan = await sumApprovedQtyForSkuLocation(session.id, sku, loc);
+        const sotStatus = periodMode === "OPNAME"
+            ? approvedAfterScan === sotQty
+                ? "SESUAI"
+                : "SELISIH"
+            : (compareItem?.status ?? "BELUM_COMPARE");
         await prisma.compareItem.upsert({
             where: {
                 sessionId_sku: {
@@ -456,13 +515,20 @@ router.post("/scan", async (req, res) => {
                     sku,
                 },
             },
-            update: {},
+            update: needsSotFill
+                ? {
+                    systemQty: sotQty,
+                    physicalQty: approvedAfterScan,
+                    status: sotStatus,
+                    updatedAt: new Date(),
+                }
+                : {},
             create: {
                 sku,
                 name: name ?? "",
-                physicalQty: 0,
-                systemQty: 0,
-                status: "BELUM_COMPARE",
+                physicalQty: approvedAfterScan,
+                systemQty: periodMode === "OPNAME" ? sotQty : 0,
+                status: periodMode === "OPNAME" ? sotStatus : "BELUM_COMPARE",
                 sessionId: session.id,
             },
         });
@@ -506,7 +572,22 @@ router.get("/comparison", async (req, res) => {
 // 5. POST sync manual
 router.post("/sync", async (req, res) => {
     try {
-        const office = req.body.office || "01";
+        const officeCode = req.body.office || "01";
+        const office = officeCode === "Semua"
+            ? "Semua"
+            : await mapLocationToOfficeAsync(officeCode);
+        if (office === "Semua") {
+            return res.status(400).json({
+                error: "Sync NAV membutuhkan gudang spesifik yang sudah Buka periode (mode Opname).",
+            });
+        }
+        const resolvedOffice = (await resolveOfficeName(office)) ?? office;
+        const mode = await getOfficePeriodMode(resolvedOffice);
+        if (mode !== "OPNAME") {
+            return res.status(400).json({
+                error: `Gudang ${resolvedOffice} masih mode Free. Tekan Buka periode di Cek Selisih sebelum sync NAV.`,
+            });
+        }
         const whereClause = await sessionScopeWhere(office);
         const items = await prisma.compareItem.findMany({
             where: whereClause,
@@ -517,14 +598,7 @@ router.post("/sync", async (req, res) => {
                 continue;
             }
             try {
-                let loc = office;
-                if (office === "Semua") {
-                    const itemSession = await prisma.opnameSession.findUnique({
-                        where: { id: item.sessionId },
-                    });
-                    loc = readOffice(itemSession ?? {});
-                }
-                const response = await axios.get(`${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`);
+                const response = await axios.get(`${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(resolvedOffice)}`, { headers: getReusableApiHeaders() });
                 const realQty = resolveStockQty(response.data);
                 const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                 const updated = await prisma.compareItem.update({
@@ -627,7 +701,7 @@ export function startOpnameCron() {
                         continue;
                     }
                     try {
-                        const response = await axios.get(`${databaseCenter()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`);
+                        const response = await axios.get(`${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(readOffice(session))}`, { headers: getReusableApiHeaders() });
                         const realQty = resolveStockQty(response.data);
                         const status = item.physicalQty === realQty ? "SESUAI" : "SELISIH";
                         await prisma.compareItem.update({

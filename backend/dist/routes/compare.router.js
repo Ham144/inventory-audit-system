@@ -1,13 +1,12 @@
 import express from "express";
-import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapOfficeToLocation, mapLocationToOfficeAsync, } from "../utils/office-mapping.js";
+import { mapLocationToOfficeAsync, resolveOfficeName, } from "../utils/office-mapping.js";
 import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, validateDateRange, } from "../utils/compare-filters.js";
 import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, clearStaleSystemApproval, } from "../utils/scan-approval.js";
-import { resolveStockQty } from "../types/catalog.js";
 import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
 import { findUserByUsername } from "../utils/user-store.js";
-const databaseCenter = () => process.env.DATABASE_REUSABLE_API;
+import { getOfficePeriodMode } from "../utils/office-period-store.js";
+import { isSkuLockedAsSesuai } from "../utils/compare-sesuai.js";
 const SESSION_OFFICE_SELECT = { office: true };
 async function getOrCreateActiveSession(office) {
     let session = await prisma.opnameSession.findFirst({
@@ -15,6 +14,7 @@ async function getOrCreateActiveSession(office) {
             office,
             status: "ONGOING",
         },
+        orderBy: { createdAt: "desc" },
     });
     if (!session) {
         session = await prisma.opnameSession.create({
@@ -48,25 +48,6 @@ function resolveApprover(req) {
     const user = req.user;
     return user?.username ?? user?.usernameLdap ?? "admin";
 }
-async function fetchNavStockQty(sku, office, req) {
-    const locationCode = await mapOfficeToLocation(office);
-    const url = `${databaseCenter()}/api/v1/inventory/count`;
-    console.log(`[DEBUG fetchNavStockQty] Requesting: ${url} with params:`, { No: sku, locationCode });
-    const response = await axios.get(url, {
-        params: { No: sku, locationCode },
-        headers: {
-            cookie: req.headers.cookie ?? "",
-        },
-        validateStatus: () => true,
-    });
-    console.log(`[DEBUG fetchNavStockQty] Response Status: ${response.status}`);
-    console.log(`[DEBUG fetchNavStockQty] Response Data Type: ${typeof response.data}`);
-    console.log(`[DEBUG fetchNavStockQty] Response Data:`, response.data);
-    if (response.status >= 400) {
-        throw new Error(`getStock failed (${response.status})`);
-    }
-    return resolveStockQty(response.data);
-}
 async function buildNavRow(item, rakStats, physicalQtyOverride) {
     const office = readOffice(item.session ?? {});
     const physicalQty = item.finalCorrectionQty !== null && item.finalCorrectionQty !== undefined
@@ -75,13 +56,20 @@ async function buildNavRow(item, rakStats, physicalQtyOverride) {
             (await sumApprovedQtyForSkuLocation(item.sessionId, item.sku, office)));
     const stats = rakStats ??
         (await countRakStatsForSkuLocation(item.sessionId, item.sku, office));
+    const stored = item.status.toUpperCase();
+    // Status live vs Initial SOT — jangan pakai SESUAI basi saat fisik approval sudah berubah
+    const status = stored === "BELUM_COMPARE"
+        ? "belum_compare"
+        : physicalQty === item.systemQty
+            ? "sesuai"
+            : "selisih";
     return {
         id: item.id,
         sku: item.sku,
         name: item.name,
         physicalQty,
         systemQty: item.systemQty,
-        status: item.status.toLowerCase(),
+        status,
         office,
         updatedAt: item.updatedAt.toISOString(),
         resolvedRakCount: stats.resolvedRakCount,
@@ -299,6 +287,20 @@ router.post("/scan/approve", async (req, res) => {
         if (!scan) {
             return res.status(404).json({ error: "Scan tidak ditemukan" });
         }
+        const compareItem = await prisma.compareItem.findUnique({
+            where: {
+                sessionId_sku: {
+                    sessionId: scan.sessionId,
+                    sku: scan.sku,
+                },
+            },
+        });
+        if (await isSkuLockedAsSesuai(compareItem, readOffice(scan))) {
+            return res.status(400).json({
+                error: "sku untuk warehouse ini sudah sesuai dengan nav",
+                message: "sku untuk warehouse ini sudah sesuai dengan nav",
+            });
+        }
         const session = await prisma.opnameSession.findUnique({
             where: { id: scan.sessionId },
         });
@@ -343,6 +345,21 @@ async function assertAdminScanMutation(req, scanLogId) {
     });
     if (!scan) {
         return { ok: false, status: 404, error: "Scan tidak ditemukan" };
+    }
+    const compareItem = await prisma.compareItem.findUnique({
+        where: {
+            sessionId_sku: {
+                sessionId: scan.sessionId,
+                sku: scan.sku,
+            },
+        },
+    });
+    if (await isSkuLockedAsSesuai(compareItem, readOffice(scan))) {
+        return {
+            ok: false,
+            status: 400,
+            error: "sku untuk warehouse ini sudah sesuai dengan nav",
+        };
     }
     const session = await prisma.opnameSession.findUnique({
         where: { id: scan.sessionId },
@@ -450,6 +467,23 @@ router.get("/nav", async (req, res) => {
         return res.status(500).json({ error: errorMessage(error) });
     }
 });
+async function assertOfficePeriodAllowsNavCompare(office) {
+    const resolved = (await resolveOfficeName(office.trim())) ?? office.trim();
+    if (!resolved || resolved.toLowerCase() === "semua") {
+        return {
+            ok: false,
+            message: "Cek selisih membutuhkan gudang spesifik yang sudah Buka periode.",
+        };
+    }
+    const mode = await getOfficePeriodMode(resolved);
+    if (mode !== "OPNAME") {
+        return {
+            ok: false,
+            message: `Gudang ${resolved} masih mode Free. Tekan Buka periode di Cek Selisih untuk ambil source of truth dulu.`,
+        };
+    }
+    return { ok: true };
+}
 router.post("/nav/:compareItemId/check", async (req, res) => {
     try {
         const compareItemId = String(req.params.compareItemId);
@@ -461,8 +495,13 @@ router.post("/nav/:compareItemId/check", async (req, res) => {
             return res.status(404).json({ error: "Compare item tidak ditemukan" });
         }
         const office = readOffice(item.session);
+        const periodGate = await assertOfficePeriodAllowsNavCompare(office);
+        if (!periodGate.ok) {
+            return res.status(400).json({ error: periodGate.message });
+        }
+        // Bandingkan fisik vs systemQty snapshot dari Buka periode (bukan fetch NAV ulang)
         const physicalQty = await sumApprovedQtyForSkuLocation(item.sessionId, item.sku, office);
-        const systemQty = await fetchNavStockQty(item.sku, office, req);
+        const systemQty = item.systemQty;
         const status = physicalQty === systemQty ? "SESUAI" : "SELISIH";
         const updated = await prisma.compareItem.update({
             where: { id: item.id },

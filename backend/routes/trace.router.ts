@@ -2,7 +2,7 @@ import { Router } from "express";
 import { readJwtUsername } from "../utils/auth-profile.js";
 import prisma from "../config/db.js";
 import { Prisma } from "@prisma/client";
-import { resolveOfficeName } from "../utils/office-mapping.js";
+import { resolveOfficeAliases } from "../utils/office-mapping.js";
 import { resolveAppUser, canAccessAdmin } from "../utils/app-user.js";
 
 function errorMessage(error: unknown): string {
@@ -34,18 +34,33 @@ router.get("/", async (req: any, res: any) => {
 
     const whereClause: Prisma.TracingInputWhereInput = {};
 
-    // Admin/owner can see all operators' traces; operators only see their own
+    // Operator: hanya log miliknya. Admin/owner: semua operator.
     if (!isAdmin) {
       const targetUsername = readJwtUsername(req.user) as string;
       whereClause.username = targetUsername;
     }
 
-    // Normalize office: accepts both locationCode ("MNG2_JUAL") and officeName ("WL Mangga Dua")
-    if (office && office.toString().toLowerCase() !== "semua") {
-      const resolvedOffice = await resolveOfficeName(office as string);
-      // resolvedOffice is null if unknown — fall through without filtering by office
-      if (resolvedOffice) {
-        whereClause.office = resolvedOffice;
+    const requestedOffice =
+      typeof office === "string" ? office.trim() : "";
+    const wantsAllOffices =
+      !requestedOffice || requestedOffice.toLowerCase() === "semua";
+
+    if (!isAdmin) {
+      // Operator terkunci ke outlet profilnya (tidak boleh browse outlet lain)
+      const operatorOffice = appUser?.office?.trim();
+      if (operatorOffice) {
+        const aliases = await resolveOfficeAliases(operatorOffice);
+        if (aliases.length > 0) {
+          whereClause.office = { in: aliases };
+        }
+      }
+    } else if (!wantsAllOffices) {
+      // Admin/owner bebas pilih outlet; cocokkan semua alias mapping
+      const aliases = await resolveOfficeAliases(requestedOffice);
+      if (aliases.length > 0) {
+        whereClause.office = { in: aliases };
+      } else {
+        whereClause.office = requestedOffice;
       }
     }
 

@@ -14,6 +14,7 @@ import { loginLdap, loginApp } from "../api/authApi";
 import { syncAppUser, getAppUser } from "../api/opnameUserApi";
 import { parseAuthProfile, resolveUserRole } from "../libs/auth-profile";
 import { useUserInfo } from "../store";
+import { toast } from "sonner";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -102,10 +103,22 @@ export default function Login() {
       }
     } catch (err: any) {
       console.error("Login error:", err);
-      setErrorMsg(
-        err.response?.data?.message ||
-          "Gagal terhubung ke server auth. Periksa koneksi jaringan Anda.",
-      );
+      const upstreamMessage = err.response?.data?.message as string | undefined;
+      if (
+        upstreamMessage &&
+        /tidak ditemukan di organisasi/i.test(upstreamMessage)
+      ) {
+        setErrorMsg(
+          loginType === "app"
+            ? "Akun App belum terdaftar di organisasi CSI. Hapus lalu buat ulang user dari Settings (Create Non-AD), atau hubungi admin."
+            : upstreamMessage,
+        );
+      } else {
+        setErrorMsg(
+          upstreamMessage ||
+            "Gagal terhubung ke server auth. Periksa koneksi jaringan Anda.",
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -125,7 +138,12 @@ export default function Login() {
         {/* Brand logo header */}
         <div className="flex flex-col items-center text-center mb-8">
           <div className="p-3.5 bg-linear-to-tr  rounded-2xl shadow-lg shadow-slate-500/10 ring-1 ring-white/20 mb-3.5">
-            <img width={60} height={60} src="/logo.png" />
+            <img
+              src="/logo.png"
+              alt="Stok Opname CSI"
+              width={60}
+              height={60}
+            />
           </div>
           <h1 className="text-xl font-black tracking-tight text-slate-900">
             Stok Opname CSI

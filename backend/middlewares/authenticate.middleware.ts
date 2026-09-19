@@ -11,8 +11,19 @@ export const noAuthOriginalUrl = [
 ];
 
 const authenticate = (req: any, res: any, next: NextFunction) => {
-  if (noAuthOriginalUrl.some((e) => req.originalUrl.startsWith(e))) {
-    console.log("skipped :", req.originalUrl);
+  const path = String(req.originalUrl ?? req.url ?? "").split("?")[0];
+
+  const isPublic = noAuthOriginalUrl.some((publicPath) => {
+    if (publicPath.endsWith("/login")) {
+      return path === publicPath || path.startsWith(`${publicPath}/`);
+    }
+    return path === publicPath;
+  });
+
+  if (isPublic) {
+    if (process.env.NODE_ENV === "development") {
+      console.log("skipped :", req.originalUrl);
+    }
     return next();
   }
 

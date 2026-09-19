@@ -17,7 +17,7 @@ export function resolveStockQty(payload) {
 }
 export function toCompareItemSeed(product, sessionId) {
     return {
-        sku: product.No ?? "",
+        sku: (product.No ?? "").trim(),
         name: product.Description ?? product.Description_3 ?? "",
         physicalQty: 0,
         systemQty: 0,

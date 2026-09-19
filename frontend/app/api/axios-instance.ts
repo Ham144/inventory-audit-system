@@ -33,7 +33,6 @@ axiosInstance.interceptors.response.use(
     const isRefreshEndpoint = originalRequest?.url?.includes(
       "/so/api/auth/refresh-token",
     );
-    console.log(is401);
     if (is401 && !originalRequest._retry && !isRefreshEndpoint) {
       if (isRefreshing) {
         // Queue the request until refresh is done
@@ -59,16 +58,7 @@ axiosInstance.interceptors.response.use(
           return axiosInstance(originalRequest); // retry original request
         }
       } catch (refreshError) {
-        const axiosRefreshError = refreshError as AxiosError;
-        // Jika refresh token gagal, redirect ke login (hindari loop di /login)
-        const isOnLogin =
-          typeof window !== "undefined" &&
-          window.location.pathname === "/login";
-        if (axiosRefreshError.response?.status === 401 && !isOnLogin) {
-          try {
-            window.location.href = "/login";
-          } catch (_) {}
-        }
+        // Biarkan bootstrap auth / AuthGate yang menangani logout.
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;

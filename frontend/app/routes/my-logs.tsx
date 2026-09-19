@@ -8,13 +8,13 @@ import {
   Hash,
   Calendar,
   Package,
-  RefreshCw,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   X,
   BarChart3,
+  RefreshCw,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { DocsShell } from "~/components/DocsShell";
@@ -31,9 +31,12 @@ import {
   resolveInitialPickedOffice,
   resolvePickedOffice,
   fetchAndCacheMappings,
+  canonicalizeLocationList,
+  toCanonicalOfficeName,
   type LocationItem,
 } from "~/libs/location";
 import { getAdminDefaultOffice, setAdminDefaultOffice } from "~/libs/app-prefs";
+import { listUnresolvedSkus } from "~/api/skuReminder.api";
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
@@ -54,6 +57,13 @@ function toDateInputValue(date: Date) {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function toDateInputFromIso(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return toDateInputValue(date);
 }
 
 function StatCard({
@@ -93,18 +103,75 @@ export default function MyLogsPage() {
   const [selectedRak, setSelectedRak] = useState("Semua");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [periodFrom, setPeriodFrom] = useState("");
+  const [periodTo, setPeriodTo] = useState("");
+  const periodOfficeApplied = useRef("");
 
   // Pagination
   const [pageSize, setPageSize] = useState(25);
   const [currentPage, setCurrentPage] = useState(1);
 
-  const compareOffice = compareOfficeScope(
+  const today = toDateInputValue(new Date());
+
+  const compareOfficeRaw = compareOfficeScope(
     userInfo,
     showOfficePicker ? pickedOffice : undefined,
   );
+  const compareOffice = toCanonicalOfficeName(compareOfficeRaw);
+
+  const canLoadPeriod =
+    Boolean(userInfo?.username) &&
+    compareOffice !== "Semua" &&
+    compareOffice.trim().length > 0;
+
+  const periodQuery = useQuery({
+    queryKey: ["sku-reminders-period", compareOffice],
+    queryFn: () =>
+      listUnresolvedSkus({
+        office: compareOffice,
+        mode: "unresolved",
+      }),
+    enabled: canLoadPeriod,
+    select: (data) => ({
+      ...data.period,
+      mode: data.mode ?? data.period?.mode ?? "FREE",
+    }),
+  });
+
+  const period = periodQuery.data;
+
+  /** Setelah Tutup (FREE): jangan tampilkan log sebelum closedAt. Setelah Buka: dari openedAt. */
+  const traceStartDate = useMemo(() => {
+    if (!dateFrom) {
+      if (period?.mode === "FREE" && period.closedAt) return period.closedAt;
+      if (period?.mode === "OPNAME" && period.openedAt) return period.openedAt;
+      return undefined;
+    }
+    if (period?.mode === "FREE" && period.closedAt) {
+      const closedDay = toDateInputFromIso(period.closedAt);
+      if (dateFrom === closedDay) return period.closedAt;
+      if (dateFrom > closedDay) return dateFrom;
+      // dateFrom < hari tutup → user sengaja lihat riwayat
+      return dateFrom;
+    }
+    if (period?.mode === "OPNAME" && period.openedAt) {
+      const openedDay = toDateInputFromIso(period.openedAt);
+      if (dateFrom === openedDay) return period.openedAt;
+    }
+    return dateFrom;
+  }, [dateFrom, period]);
 
   const scansQuery = useQuery({
-    queryKey: ["trace-logs", compareOffice, selectedRak, dateFrom, dateTo],
+    queryKey: [
+      "trace-logs",
+      compareOffice,
+      selectedRak,
+      dateFrom,
+      dateTo,
+      traceStartDate,
+      period?.mode,
+      period?.closedAt,
+    ],
     queryFn: () =>
       traceLogs({
         office:
@@ -112,12 +179,70 @@ export default function MyLogsPage() {
             ? compareOffice
             : undefined,
         rak: selectedRak !== "Semua" ? selectedRak : undefined,
-        startDate: dateFrom || undefined,
+        startDate: traceStartDate,
         endDate: dateTo || undefined,
       }),
     enabled: Boolean(userInfo?.username),
     refetchInterval: 15000,
   });
+
+  useEffect(() => {
+    // Saat ganti outlet, buang rentang tanggal outlet sebelumnya
+    // supaya tidak "kosong" karena filter tanggal salah lokasi.
+    periodOfficeApplied.current = "";
+    setPeriodFrom("");
+    setPeriodTo("");
+    setDateFrom("");
+    setDateTo("");
+  }, [compareOffice]);
+
+  useEffect(() => {
+    if (!canLoadPeriod) {
+      periodOfficeApplied.current = "";
+      return;
+    }
+
+    if (periodQuery.isLoading || periodQuery.isFetching) return;
+
+    const periodKey = [
+      compareOffice,
+      period?.mode ?? "",
+      period?.closedAt ?? "",
+      period?.openedAt ?? "",
+    ].join("|");
+    if (periodOfficeApplied.current === periodKey) return;
+    periodOfficeApplied.current = periodKey;
+
+    if (period?.mode === "FREE" && period.closedAt) {
+      const from = toDateInputFromIso(period.closedAt) || today;
+      setPeriodFrom(from);
+      setPeriodTo(today);
+      setDateFrom(from);
+      setDateTo(today);
+      return;
+    }
+
+    if (period?.mode === "OPNAME" && period.openedAt) {
+      const from = toDateInputFromIso(period.openedAt) || today;
+      setPeriodFrom(from);
+      setPeriodTo(today);
+      setDateFrom(from);
+      setDateTo(today);
+      return;
+    }
+
+    setPeriodFrom("");
+    setPeriodTo("");
+    setDateFrom("");
+    setDateTo("");
+  }, [
+    canLoadPeriod,
+    compareOffice,
+    period,
+    periodQuery.isLoading,
+    periodQuery.isFetching,
+    today,
+  ]);
 
   useEffect(() => {
     if (userInfo === null) navigate("/login", { replace: true });
@@ -130,7 +255,7 @@ export default function MyLogsPage() {
       try {
         await fetchAndCacheMappings();
         const res = await locationApi.getAllLocation("");
-        setLocations(normalizeLocationList(res));
+        setLocations(canonicalizeLocationList(normalizeLocationList(res)));
       } catch {
         setLocations([]);
       } finally {
@@ -201,16 +326,17 @@ export default function MyLogsPage() {
   );
 
   const hasActiveFilters =
-    searchTerm || selectedRak !== "Semua" || dateFrom || dateTo;
+    Boolean(searchTerm) ||
+    selectedRak !== "Semua" ||
+    dateFrom !== periodFrom ||
+    dateTo !== periodTo;
 
   const clearFilters = () => {
     setSearchTerm("");
     setSelectedRak("Semua");
-    setDateFrom("");
-    setDateTo("");
+    setDateFrom(periodFrom);
+    setDateTo(periodTo);
   };
-
-  const today = toDateInputValue(new Date());
 
   if (userInfo === undefined) {
     return (
@@ -248,24 +374,6 @@ export default function MyLogsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Link
-              to="/tugas"
-              className="btn btn-sm btn-ghost border border-slate-200 text-slate-600 hover:text-slate-700"
-            >
-              Tugas SKU
-            </Link>
-            <button
-              onClick={() => scansQuery.refetch()}
-              disabled={scansQuery.isFetching}
-              title="Refresh data"
-              className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-slate-600 hover:border-slate-300 hover:shadow-sm transition-all"
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${scansQuery.isFetching ? "animate-spin text-slate-500" : ""}`}
-              />
-            </button>
-          </div>
         </div>
 
         {/* Stat cards */}
@@ -393,7 +501,7 @@ export default function MyLogsPage() {
             </div>
 
             {/* Date to */}
-            <div className="flex flex-col gap-1.5 min-w-[135px]">
+            <div className="flex flex-col gap-1.5 ">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
                 <Calendar className="h-3 w-3 text-slate-500" />
                 Sampai

@@ -139,30 +139,60 @@ export function clearFrontendMappingsCache() {
   mappingsFetched = false;
 }
 
+/** Canonical officeName (e.g. MNG2_JUAL → WL Mangga Dua). */
+export function toCanonicalOfficeName(raw: string): string {
+  const value = raw.trim();
+  if (!value || value === "Semua") return value;
+
+  if (!mappingsFetched) {
+    mappingsFetched = true;
+    fetchAndCacheMappings().catch(() => {});
+  }
+
+  const byName = cachedMappings.find(
+    (m) => m.officeName.toLowerCase() === value.toLowerCase(),
+  );
+  if (byName) return byName.officeName;
+
+  const byCode = cachedMappings.find(
+    (m) => m.locationCode.toLowerCase() === value.toLowerCase(),
+  );
+  if (byCode) return byCode.officeName;
+
+  return value;
+}
+
+/** NAV locationCode (e.g. WL Mangga Dua → MNG2_JUAL). */
+export function toLocationCode(raw: string): string {
+  const value = raw.trim();
+  if (!value || value === "Semua") return value;
+
+  if (!mappingsFetched) {
+    mappingsFetched = true;
+    fetchAndCacheMappings().catch(() => {});
+  }
+
+  const byCode = cachedMappings.find(
+    (m) => m.locationCode.toLowerCase() === value.toLowerCase(),
+  );
+  if (byCode) return byCode.locationCode;
+
+  const byName = cachedMappings.find(
+    (m) => m.officeName.toLowerCase() === value.toLowerCase(),
+  );
+  if (byName) return byName.locationCode;
+
+  return value;
+}
+
 export function isMatchingOffice(
   officeName: string,
   locationCode: string,
 ): boolean {
-  const officeClean = officeName.trim().toLowerCase();
-  const codeClean = locationCode.trim().toLowerCase();
-  if (officeClean === codeClean) return true;
-
-  if (!mappingsFetched) {
-    mappingsFetched = true; // prevent parallel fetches
-    fetchAndCacheMappings().catch(() => {});
-  }
-
-  // Try cached database mappings first
-  if (cachedMappings.length > 0) {
-    const match = cachedMappings.find(
-      (m) =>
-        m.officeName.toLowerCase() === officeClean &&
-        m.locationCode.toLowerCase() === codeClean,
-    );
-    if (match) return true;
-  }
-
-  return false;
+  const left = toCanonicalOfficeName(officeName).toLowerCase();
+  const right = toCanonicalOfficeName(locationCode).toLowerCase();
+  if (!left || !right) return false;
+  return left === right;
 }
 
 export function locationExists(
@@ -181,7 +211,9 @@ export function resolvePickedOffice(
   const value = pickedOffice.trim();
   if (!value || value === "Semua") return "Semua";
   const match = locations.find((loc) => isMatchingOffice(value, loc.name));
-  return match ? match.name : "Semua";
+  if (!match) return "Semua";
+  // Selalu simpan officeName kanonik, bukan locationCode
+  return toCanonicalOfficeName(match.name);
 }
 
 export function resolveInitialPickedOffice(input: {
@@ -197,16 +229,31 @@ export function resolveInitialPickedOffice(input: {
     .filter(Boolean) as string[];
 
   if (locations.length === 0) {
-    return candidates[0] ?? fallback;
+    return candidates[0] ? toCanonicalOfficeName(candidates[0]) : fallback;
   }
   for (const candidate of candidates) {
     const match = locations.find((loc) =>
       isMatchingOffice(candidate, loc.name),
     );
     if (match) {
-      return match.name;
+      return toCanonicalOfficeName(match.name);
     }
   }
 
   return fallback;
+}
+
+/** Tulis ulang daftar lokasi ke officeName kanonik (hindari MNG2_JUAL di UI). */
+export function canonicalizeLocationList(
+  locations: LocationItem[],
+): LocationItem[] {
+  const seen = new Set<string>();
+  const result: LocationItem[] = [];
+  for (const loc of locations) {
+    const name = toCanonicalOfficeName(loc.name);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    result.push({ ...loc, name });
+  }
+  return result;
 }

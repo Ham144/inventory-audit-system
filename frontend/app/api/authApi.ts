@@ -1,47 +1,116 @@
 import { toast } from "sonner";
+import axios from "axios";
 import axiosInstance from "./axios-instance";
+import { BASE_URL } from "../libs/constant";
+
+const authBaseUrl = import.meta.env.VITE_BACKEND_BASE_URL ?? BASE_URL;
+
+/** Default CSI tenant for SO multi-tenant auth. */
+export const DEFAULT_SELECTED_ORG = {
+  organizationName: "CATUR SUKSES INTERNASIONAL",
+  _id: "688828ded953f48ff0fa7cba",
+} as const;
+
+export type SelectedOrg = {
+  organizationName: string;
+  _id: string;
+};
+
+export async function refreshSession(): Promise<boolean> {
+  try {
+    const response = await axios.post(
+      `${authBaseUrl}/so/api/auth/refresh-token`,
+      {},
+      { withCredentials: true },
+    );
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+export async function getAllOrgs(): Promise<SelectedOrg[]> {
+  const response = await axiosInstance.get("/so/api/org/getAllOrg");
+  const payload = response.data;
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : [];
+
+  return list
+    .map((item: Record<string, unknown>) => {
+      const id = String(item?._id ?? item?.id ?? "").trim();
+      const organizationName = String(
+        item?.organizationName ?? item?.name ?? "",
+      ).trim();
+      if (!id || !organizationName) return null;
+      return { _id: id, organizationName };
+    })
+    .filter(Boolean) as SelectedOrg[];
+}
+
+export async function resolveSelectedOrg(): Promise<SelectedOrg> {
+  try {
+    const orgs = await getAllOrgs();
+    const match = orgs.find(
+      (org) =>
+        org._id === DEFAULT_SELECTED_ORG._id ||
+        org.organizationName.toUpperCase() ===
+          DEFAULT_SELECTED_ORG.organizationName,
+    );
+    if (match) return match;
+    if (orgs[0]) return orgs[0];
+  } catch {
+    // fall through to hardcoded default
+  }
+  return { ...DEFAULT_SELECTED_ORG };
+}
+
+function withSelectedOrg<T extends Record<string, unknown>>(
+  body: T,
+  selectedOrg: SelectedOrg = DEFAULT_SELECTED_ORG,
+) {
+  return {
+    ...body,
+    selectedOrg,
+  };
+}
 
 //login LDAP
 export const loginLdap = async (body: any) => {
-  const finalBody = {
-    ...body,
-    selectedOrg: {
-      organizationName: "CATUR SUKSES INTERNASIONAL",
-      _id: "688828ded953f48ff0fa7cba",
-    },
-  };
+  const selectedOrg = await resolveSelectedOrg();
   const response = await axiosInstance.post(
     `/so/api/auth/login/ldap`,
-    finalBody,
+    withSelectedOrg(body, selectedOrg),
   );
-  return response; // ✅ Return full response
+  return response;
 };
 
 export const loginApp = async (body: any) => {
-  const finalBody = {
-    ...body,
-    selectedOrg: {
-      organizationName: "CATUR SUKSES INTERNASIONAL",
-      _id: "688828ded953f48ff0fa7cba",
-    },
-  };
+  const selectedOrg = await resolveSelectedOrg();
   const response = await axiosInstance.post(
     `/so/api/auth/login/app`,
-    finalBody,
+    withSelectedOrg(body, selectedOrg),
   );
-  return response; // ✅ Return full response
+  return response;
 };
 
 export const register = async (body: any) => {
+  const selectedOrg = await resolveSelectedOrg();
   const response = await axiosInstance.post(
     "/so/api/auth/multi-tenant/register",
-    body,
+    withSelectedOrg(body, selectedOrg),
   );
   return response?.data;
 };
 
 export const createAppUser = async (body: any) => {
-  const response = await axiosInstance.post("/so/api/auth/createAppUser", body);
+  const selectedOrg = await resolveSelectedOrg();
+  const response = await axiosInstance.post(
+    "/so/api/auth/createAppUser",
+    withSelectedOrg(body, selectedOrg),
+  );
   return response.data;
 };
 
@@ -56,7 +125,6 @@ export const getUserInfo = async () => {
     return null;
   }
 };
-
 //ini banyak yang gunain hati hati, edit update user saja
 export const getAllAccount = async (searchKey: any) => {
   const params: Record<string, any> = {};

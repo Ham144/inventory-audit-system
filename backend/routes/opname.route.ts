@@ -5,6 +5,8 @@ import {
   mapLocationToOffice,
   mapLocationToOfficeAsync,
   mapOfficeToLocation,
+  resolveLocationCode,
+  resolveOfficeAliases,
   resolveOfficeName,
 } from "../utils/office-mapping.js";
 
@@ -16,6 +18,7 @@ import {
   deleteScanQtyApprovals,
   toScanGroups,
   readOffice,
+  sumApprovedQtyForSkuLocation,
 } from "../utils/scan-approval.js";
 import {
   assertScanAccess,
@@ -49,6 +52,12 @@ import {
   getReusableApiBase,
   getReusableApiHeaders,
 } from "../utils/reusable-api.js";
+import { getOfficePeriodMode } from "../utils/office-period-store.js";
+import {
+  checkStockOne,
+  isSoapStockConfigured,
+} from "../soaps/stock-soap.js";
+import { isSkuLockedAsSesuai } from "../utils/compare-sesuai.js";
 import { traceInput } from "./trace.router.js";
 import { markSkuReminderResolved } from "./sku-reminder.router.js";
 
@@ -421,9 +430,12 @@ async function seedSessionCatalog(sessionId: string, tx?: any) {
 }
 
 async function getOrCreateActiveSession(office: string) {
+  const aliases = await resolveOfficeAliases(office);
+  const officeKeys = aliases.length ? aliases : [office];
+
   let session = await prisma.opnameSession.findFirst({
     where: {
-      office,
+      office: { in: officeKeys },
       status: "ONGOING",
     } as never,
   });
@@ -449,7 +461,8 @@ async function sessionScopeWhere(
   const office =
     officeCode === "Semua"
       ? "Semua"
-      : await mapLocationToOfficeAsync(officeCode);
+      : (await resolveOfficeName(officeCode)) ??
+        (await mapLocationToOfficeAsync(officeCode));
   if (office === "Semua") {
     const activeSessions = await prisma.opnameSession.findMany({
       where: { status: "ONGOING" },
@@ -458,8 +471,24 @@ async function sessionScopeWhere(
     return { sessionId: { in: sessionIds } };
   }
 
-  const session = await getOrCreateActiveSession(office);
-  return { sessionId: session.id };
+  const aliases = await resolveOfficeAliases(office);
+  const officeKeys = aliases.length ? aliases : [office];
+  const sessions = await prisma.opnameSession.findMany({
+    where: {
+      office: { in: officeKeys },
+      status: "ONGOING",
+    } as never,
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (sessions.length === 0) {
+    const session = await getOrCreateActiveSession(office);
+    return { sessionId: session.id };
+  }
+  if (sessions.length === 1) {
+    return { sessionId: sessions[0].id };
+  }
+  return { sessionId: { in: sessions.map((s) => s.id) } };
 }
 
 // 1. GET active session
@@ -579,7 +608,7 @@ router.post("/scan", async (req: any, res: Response) => {
       },
     });
 
-    if (compareItem && compareItem.status === "SESUAI") {
+    if (await isSkuLockedAsSesuai(compareItem, loc)) {
       return res.status(400).json({
         message: "sku untuk warehouse ini sudah sesuai dengan nav",
         error: "sku untuk warehouse ini sudah sesuai dengan nav",
@@ -631,6 +660,42 @@ router.post("/scan", async (req: any, res: Response) => {
     });
     await markSkuReminderResolved(sku, loc);
 
+    // Initial SOT: mode OPNAME → SKU baru / BELUM_COMPARE diisi SOAP otomatis
+    const periodMode = await getOfficePeriodMode(loc);
+    let sotQty = compareItem?.systemQty ?? 0;
+    let needsSotFill =
+      periodMode === "OPNAME" &&
+      isSoapStockConfigured() &&
+      (!compareItem || compareItem.status === "BELUM_COMPARE");
+
+    if (needsSotFill) {
+      try {
+        const locationCode =
+          (await resolveLocationCode(loc)) ?? (await mapOfficeToLocation(loc));
+        if (locationCode) {
+          sotQty = await checkStockOne(sku, locationCode);
+        }
+      } catch (err: unknown) {
+        console.error(
+          "[opname] SOAP Initial SOT on scan failed:",
+          errorMessage(err),
+        );
+        needsSotFill = false;
+      }
+    }
+
+    const approvedAfterScan = await sumApprovedQtyForSkuLocation(
+      session.id,
+      sku,
+      loc,
+    );
+    const sotStatus =
+      periodMode === "OPNAME"
+        ? approvedAfterScan === sotQty
+          ? "SESUAI"
+          : "SELISIH"
+        : (compareItem?.status ?? "BELUM_COMPARE");
+
     await prisma.compareItem.upsert({
       where: {
         sessionId_sku: {
@@ -638,13 +703,20 @@ router.post("/scan", async (req: any, res: Response) => {
           sku,
         },
       },
-      update: {},
+      update: needsSotFill
+        ? {
+            systemQty: sotQty,
+            physicalQty: approvedAfterScan,
+            status: sotStatus,
+            updatedAt: new Date(),
+          }
+        : {},
       create: {
         sku,
         name: name ?? "",
-        physicalQty: 0,
-        systemQty: 0,
-        status: "BELUM_COMPARE",
+        physicalQty: approvedAfterScan,
+        systemQty: periodMode === "OPNAME" ? sotQty : 0,
+        status: periodMode === "OPNAME" ? sotStatus : "BELUM_COMPARE",
         sessionId: session.id,
       },
     });
@@ -693,7 +765,28 @@ router.get("/comparison", async (req: Request, res: Response) => {
 // 5. POST sync manual
 router.post("/sync", async (req: Request, res: Response) => {
   try {
-    const office = (req.body as { office?: string }).office || "01";
+    const officeCode = (req.body as { office?: string }).office || "01";
+    const office =
+      officeCode === "Semua"
+        ? "Semua"
+        : await mapLocationToOfficeAsync(officeCode);
+
+    if (office === "Semua") {
+      return res.status(400).json({
+        error:
+          "Sync NAV membutuhkan gudang spesifik yang sudah Buka periode (mode Opname).",
+      });
+    }
+
+    const resolvedOffice =
+      (await resolveOfficeName(office)) ?? office;
+    const mode = await getOfficePeriodMode(resolvedOffice);
+    if (mode !== "OPNAME") {
+      return res.status(400).json({
+        error: `Gudang ${resolvedOffice} masih mode Free. Tekan Buka periode di Cek Selisih sebelum sync NAV.`,
+      });
+    }
+
     const whereClause = await sessionScopeWhere(office);
 
     const items = await prisma.compareItem.findMany({
@@ -707,16 +800,8 @@ router.post("/sync", async (req: Request, res: Response) => {
         continue;
       }
       try {
-        let loc = office;
-        if (office === "Semua") {
-          const itemSession = await prisma.opnameSession.findUnique({
-            where: { id: item.sessionId },
-          });
-          loc = readOffice(itemSession ?? {});
-        }
-
         const response = await axios.get<InventoryResponse>(
-          `${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(loc)}`,
+          `${databaseReusableApi()}/api/v1/inventory/count?No=${item.sku}&locationCode=${await mapOfficeToLocation(resolvedOffice)}`,
           { headers: getReusableApiHeaders() },
         );
 

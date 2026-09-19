@@ -7,7 +7,7 @@ export function shouldAssignOwnerRole(input) {
     return isItDepartment(input.office) || isItDepartment(input.description);
 }
 export async function findUserByUsername(username) {
-    const result = await pool.query(`SELECT username, role, office, type
+    const result = await pool.query(`SELECT username, role, office, type, "mongooseId"
      FROM "User"
      WHERE username = $1
      LIMIT 1`, [username]);
@@ -18,6 +18,7 @@ export async function syncUserProfile(input) {
     const rawOffice = input.office?.trim() || null;
     const assignOwner = shouldAssignOwnerRole(input);
     const userType = input.type?.trim() || "external";
+    const mongooseId = input.mongooseId?.trim() || null;
     // If rawOffice is "IT", it is a department name, not a physical office location
     let sanitizedOffice = isItDepartment(rawOffice) ? null : rawOffice;
     if (sanitizedOffice) {
@@ -26,8 +27,8 @@ export async function syncUserProfile(input) {
             sanitizedOffice = resolved;
         }
     }
-    const result = await pool.query(`INSERT INTO "User" (username, role, office, type, "createdAt", "updatedAt")
-     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE 'operator' END, $2, $4, NOW(), NOW())
+    const result = await pool.query(`INSERT INTO "User" (username, role, office, type, "mongooseId", "createdAt", "updatedAt")
+     VALUES ($1, CASE WHEN $3 THEN 'owner' ELSE 'operator' END, $2, $4, $5, NOW(), NOW())
      ON CONFLICT (username)
      DO UPDATE SET
        office = CASE
@@ -39,8 +40,9 @@ export async function syncUserProfile(input) {
          WHEN "User".type = 'app' THEN 'app'
          ELSE COALESCE(EXCLUDED.type, "User".type, 'external')
        END,
+       "mongooseId" = COALESCE(EXCLUDED."mongooseId", "User"."mongooseId"),
        "updatedAt" = NOW()
-     RETURNING username, role, office, type`, [username, sanitizedOffice, assignOwner, userType]);
+     RETURNING username, role, office, type, "mongooseId"`, [username, sanitizedOffice, assignOwner, userType, mongooseId]);
     return result.rows[0];
 }
 /** @deprecated use syncUserProfile */
@@ -52,7 +54,7 @@ export function isValidAppRole(role) {
     return VALID_ROLES.has(role.trim().toLowerCase());
 }
 export async function listUsers() {
-    const result = await pool.query(`SELECT username, role, office, type
+    const result = await pool.query(`SELECT username, role, office, type, "mongooseId"
      FROM "User"
      ORDER BY username ASC`);
     return result.rows;
@@ -65,7 +67,7 @@ export async function updateUserRole(username, role) {
     const result = await pool.query(`UPDATE "User"
      SET role = $2, "updatedAt" = NOW()
      WHERE username = $1
-     RETURNING username, role, office, type`, [username.trim(), normalizedRole]);
+     RETURNING username, role, office, type, "mongooseId"`, [username.trim(), normalizedRole]);
     return result.rows[0] ?? null;
 }
 export async function updateUserOffice(username, office) {
@@ -80,7 +82,7 @@ export async function updateUserOffice(username, office) {
     const result = await pool.query(`UPDATE "User"
      SET office = $2, "updatedAt" = NOW()
      WHERE username = $1
-     RETURNING username, role, office, type`, [username.trim(), sanitizedOffice]);
+     RETURNING username, role, office, type, "mongooseId"`, [username.trim(), sanitizedOffice]);
     return result.rows[0] ?? null;
 }
 export async function deleteUser(username) {
@@ -94,17 +96,19 @@ export async function upsertUser(input) {
     const role = input.role?.trim().toLowerCase() || "operator";
     const office = input.office?.trim() || null;
     const userType = input.type?.trim() || "app";
+    const mongooseId = input.mongooseId?.trim() || null;
     if (!isValidAppRole(role)) {
         throw new Error("Role tidak valid");
     }
-    const result = await pool.query(`INSERT INTO "User" (username, role, office, type, "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, NOW(), NOW())
+    const result = await pool.query(`INSERT INTO "User" (username, role, office, type, "mongooseId", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
      ON CONFLICT (username)
      DO UPDATE SET
        role = EXCLUDED.role,
        office = EXCLUDED.office,
        type = EXCLUDED.type,
+       "mongooseId" = COALESCE(EXCLUDED."mongooseId", "User"."mongooseId"),
        "updatedAt" = NOW()
-     RETURNING username, role, office, type`, [username, role, office, userType]);
+     RETURNING username, role, office, type, "mongooseId"`, [username, role, office, userType, mongooseId]);
     return result.rows[0];
 }

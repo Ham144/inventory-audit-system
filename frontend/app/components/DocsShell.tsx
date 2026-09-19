@@ -1,25 +1,21 @@
 import { Link } from "react-router";
-import { Layers, BookOpen, LogIn } from "lucide-react";
+import { BookOpen, LogIn } from "lucide-react";
 import { useUserInfo } from "~/store";
 import { AppNavigation } from "./AppNavigation";
 import { UserSessionBadge } from "./UserSessionBadge";
 
 const DOC_SECTIONS = [
   { id: "ringkasan", label: "Ringkasan" },
-  { id: "role", label: "Role & Akses" },
-  { id: "auth", label: "Alur Auth" },
-  { id: "scan", label: "Logika Scan" },
-  { id: "compare", label: "Rekonsiliasi" },
-  { id: "menu", label: "Menu Aplikasi" },
-  { id: "api", label: "API Reference" },
+  { id: "role", label: "Role" },
+  { id: "alur", label: "Alur Kerja" },
+  { id: "menu", label: "Menu" },
 ] as const;
 
 const APP_MENUS = [
-  { path: "/input", label: "/input", desc: "Formulir scan" },
-  { path: "/admin", label: "/admin", desc: "Dashboard" },
-  { path: "/settings", label: "/settings", desc: "Pengaturan" },
-  { path: "/my-logs", label: "/my-logs", desc: "Riwayat scan" },
-  { path: "/tugas", label: "/tugas", desc: "Tugas SKU unresolved" },
+  { path: "/input", label: "Input", desc: "Scan fisik" },
+  { path: "/selisih", label: "Cek Selisih", desc: "Periode & tugas" },
+  { path: "/admin", label: "Admin", desc: "Compare" },
+  { path: "/my-logs", label: "My Logs", desc: "Riwayat scan" },
 ] as const;
 
 type DocsShellProps = {
@@ -43,9 +39,13 @@ export function DocsShell({
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-4">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="p-2 rounded-xl bg-slate-500 text-white shadow-sm">
-              <Layers className="h-5 w-5" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="Stok Opname CSI"
+              width={36}
+              height={36}
+              className="rounded-xl shadow-sm"
+            />
             <div>
               <p className="text-sm font-bold text-slate-900 group-hover:text-slate-700 transition-colors">
                 {title}

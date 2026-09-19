@@ -450,49 +450,8 @@ export default function SettingsPage() {
               <p className="font-semibold text-slate-800">{displayOffice}</p>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="btn btn-sm btn-outline border-slate-200 text-slate-700 gap-2"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`}
-            />
-            Sinkronkan Office
-          </button>
         </section>
 
-        {/* Preferensi UI */}
-        <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <Palette className="h-4 w-4 text-slate-500" />
-            <h2 className="font-bold text-slate-900">Preferensi UI</h2>
-          </div>
-
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              Tema
-            </p>
-            <div className="join">
-              <button
-                type="button"
-                className={`btn btn-sm join-item ${theme === "light" ? "btn-primary" : "btn-ghost"}`}
-                onClick={() => handleThemeChange("light")}
-              >
-                Light
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm join-item ${theme === "dark" ? "btn-primary" : "btn-ghost"}`}
-                onClick={() => handleThemeChange("dark")}
-              >
-                Dark
-              </button>
-            </div>
-          </div>
-        </section>
 
         {/* Pemetaan Lokasi (CRUD) */}
         <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">

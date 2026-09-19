@@ -44,7 +44,13 @@ export function extractAuthProfileFields(data) {
     const description = readFieldCI(root, "description", "department", "division", "jobTitle") ??
         readFieldCI(dataNode, "description", "department", "division", "jobTitle") ??
         readFieldCI(userInfoNode, "description", "department", "division", "jobTitle");
-    return { username, office, description };
+    const rawMongooseId = readFieldCI(root, "_id", "id") ??
+        readFieldCI(dataNode, "_id", "id") ??
+        readFieldCI(userInfoNode, "_id", "id");
+    const mongooseId = rawMongooseId
+        ? String(rawMongooseId).replace(/^ObjectId\(['"]?(.*?)['"]?\)$/, "$1")
+        : undefined;
+    return { username, office, description, mongooseId };
 }
 export function readJwtUsername(jwtUser) {
     if (!jwtUser)
@@ -52,4 +58,10 @@ export function readJwtUsername(jwtUser) {
     const username = readFieldCI(jwtUser, "username", "usernameLdap", "userName", "name") ??
         null;
     return username ?? null;
+}
+export function readJwtMongooseId(jwtUser) {
+    if (!jwtUser)
+        return null;
+    const rawId = readFieldCI(jwtUser, "_id", "id");
+    return rawId ? String(rawId).replace(/^ObjectId\(['"]?(.*?)['"]?\)$/, "$1") : null;
 }

@@ -77,6 +77,26 @@ export async function mapOfficeToLocation(officeName) {
     return match ? match.locationCode : officeName;
 }
 /**
+ * Prefer exact locationCode (e.g. PLUIT_MP) when provided; otherwise first
+ * location mapped to the office name (e.g. WL Pluit → PLUIT_JUAL).
+ */
+export async function resolveLocationCode(raw) {
+    const value = raw.trim();
+    if (!value || value.toLowerCase() === "semua")
+        return null;
+    const mappings = await getMappings();
+    const byCode = mappings.find((m) => m.locationCode.toUpperCase() === value.toUpperCase());
+    if (byCode)
+        return byCode.locationCode;
+    const byName = mappings.find((m) => m.officeName.toLowerCase() === value.toLowerCase());
+    if (byName)
+        return byName.locationCode;
+    // Already looks like a NAV location code
+    if (/^[A-Z0-9_]+$/i.test(value))
+        return value.toUpperCase();
+    return null;
+}
+/**
  * Resolves any office string (officeName or locationCode) to a canonical officeName.
  * Returns null if the value is unrecognized (e.g. "IT", "01", random strings).
  */
@@ -95,4 +115,31 @@ export async function resolveOfficeName(raw) {
         return byCode.officeName;
     // Unknown value
     return null;
+}
+/**
+ * All office string aliases that may exist in DB for one picker value.
+ * Example: "PLUIT_MP" → ["PLUIT_MP", "WL Pluit", "PLUIT_JUAL", ...]
+ * so filters don't miss Trace/Scan rows stored under either form.
+ */
+export async function resolveOfficeAliases(raw) {
+    const value = raw.trim();
+    if (!value || value.toLowerCase() === "semua")
+        return [];
+    const mappings = await getMappings();
+    const aliases = new Set([value]);
+    const officeName = await resolveOfficeName(value);
+    if (officeName) {
+        aliases.add(officeName);
+        for (const mapping of mappings) {
+            if (mapping.officeName.toLowerCase() === officeName.toLowerCase()) {
+                aliases.add(mapping.officeName);
+                aliases.add(mapping.locationCode);
+            }
+        }
+    }
+    const locationCode = await resolveLocationCode(value);
+    if (locationCode) {
+        aliases.add(locationCode);
+    }
+    return [...aliases].filter(Boolean);
 }

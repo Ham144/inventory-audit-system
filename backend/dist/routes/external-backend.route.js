@@ -2,234 +2,278 @@ import express from "express";
 import axios from "axios";
 import { syncUserProfile } from "../utils/user-store.js";
 import { filterProductListPayload } from "../utils/product-filter.js";
-import { extractAuthProfileFields } from "../utils/auth-profile.js";
+import { extractAuthProfileFields, readJwtMongooseId, readJwtUsername, } from "../utils/auth-profile.js";
+import { getReusableApiBase, getReusableApiHeaders, } from "../utils/reusable-api.js";
 const router = express.Router();
 const STRIP_REQUEST_HEADERS = new Set([
-  "host",
-  "connection",
-  "content-length",
-  "transfer-encoding",
-  "accept-encoding",
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "accept-encoding",
 ]);
 const AUTH_PROFILE_PATHS = [
-  "/auth/getUserInfo",
-  "/auth/login/ldap",
-  "/auth/login/app",
+    "/auth/getUserInfo",
+    "/auth/login/ldap",
+    "/auth/login/app",
 ];
 function buildForwardHeaders(req, hasJsonBody) {
-  const headers = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (STRIP_REQUEST_HEADERS.has(key.toLowerCase())) continue;
-    if (value === undefined) continue;
-    headers[key] = value;
-  }
-  if (hasJsonBody) {
-    headers["content-type"] = "application/json";
-  }
-  return headers;
+    const headers = {};
+    for (const [key, value] of Object.entries(req.headers)) {
+        if (STRIP_REQUEST_HEADERS.has(key.toLowerCase()))
+            continue;
+        if (value === undefined)
+            continue;
+        headers[key] = value;
+    }
+    if (hasJsonBody) {
+        headers["content-type"] = "application/json";
+    }
+    // Panggilan ke reusable/open API: auth gateway via x-api-key dari .env
+    Object.assign(headers, getReusableApiHeaders());
+    return headers;
 }
 function translateOperatorRoleToMember(data) {
-  if (!data || typeof data !== "object") {
-    return data;
-  }
-  if (Array.isArray(data)) {
-    return data.map(translateOperatorRoleToMember);
-  }
-  const result = { ...data };
-  for (const key of Object.keys(result)) {
-    const value = result[key];
-    if (
-      key === "role" &&
-      typeof value === "string" &&
-      value.trim().toLowerCase() === "operator"
-    ) {
-      result[key] = "member";
-    } else if (value && typeof value === "object") {
-      result[key] = translateOperatorRoleToMember(value);
+    if (!data || typeof data !== "object") {
+        return data;
     }
-  }
-  return result;
+    if (Array.isArray(data)) {
+        return data.map(translateOperatorRoleToMember);
+    }
+    const result = { ...data };
+    for (const key of Object.keys(result)) {
+        const value = result[key];
+        if (key === "role" &&
+            typeof value === "string" &&
+            value.trim().toLowerCase() === "operator") {
+            result[key] = "member";
+        }
+        else if (value && typeof value === "object") {
+            result[key] = translateOperatorRoleToMember(value);
+        }
+    }
+    return result;
 }
 function buildForwardBody(req, path) {
-  const isAuthLogin =
-    req.method === "POST" &&
-    (path.includes("/auth/login/ldap") || path.includes("/auth/login/app"));
-  if (
-    !isAuthLogin ||
-    !process.env.BYPASS_TURNSTILE_KEY ||
-    !process.env.BYPASS_OTP_KEY
-  ) {
-    return translateOperatorRoleToMember(req.body);
-  }
-  const baseBody =
-    typeof req.body === "object" &&
-    req.body !== null &&
-    !Array.isArray(req.body)
-      ? req.body
-      : {};
-  return translateOperatorRoleToMember({
-    ...baseBody,
-    BYPASS_TURNSTILE_KEY: process.env.BYPASS_TURNSTILE_KEY,
-    BYPASS_OTP_KEY: process.env.BYPASS_OTP_KEY,
-    // Supply all common captcha/turnstile field names the upstream may check
-    captchaToken: process.env.BYPASS_TURNSTILE_KEY,
-    turnstileToken: process.env.BYPASS_TURNSTILE_KEY,
-    "cf-turnstile-response": process.env.BYPASS_TURNSTILE_KEY,
-  });
+    const isAuthWrite = (req.method === "POST" ||
+        req.method === "PUT" ||
+        req.method === "PATCH" ||
+        req.method === "DELETE") &&
+        path.includes("/auth/");
+    if (!isAuthWrite ||
+        !process.env.BYPASS_TURNSTILE_KEY ||
+        !process.env.BYPASS_OTP_KEY) {
+        return translateOperatorRoleToMember(req.body);
+    }
+    const baseBody = typeof req.body === "object" &&
+        req.body !== null &&
+        !Array.isArray(req.body)
+        ? req.body
+        : {};
+    return translateOperatorRoleToMember({
+        ...baseBody,
+        BYPASS_TURNSTILE_KEY: process.env.BYPASS_TURNSTILE_KEY,
+        BYPASS_OTP_KEY: process.env.BYPASS_OTP_KEY,
+        // Supply all common captcha/turnstile field names the upstream may check
+        captchaToken: process.env.BYPASS_TURNSTILE_KEY,
+        turnstileToken: process.env.BYPASS_TURNSTILE_KEY,
+        "cf-turnstile-response": process.env.BYPASS_TURNSTILE_KEY,
+    });
 }
 function extractAuthProfile(data) {
-  return extractAuthProfileFields(data);
+    return extractAuthProfileFields(data);
 }
 function mergeRoleIntoPayload(data, role) {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return data;
-  }
-  const root = { ...data };
-  const applyRole = (target) => {
-    target.role = role;
-  };
-  if (root.userInfo && typeof root.userInfo === "object") {
-    applyRole(root.userInfo);
-    return root;
-  }
-  if (root.user && typeof root.user === "object") {
-    applyRole(root.user);
-    return root;
-  }
-  if (root.data && typeof root.data === "object") {
-    const nested = root.data;
-    if (nested.userInfo && typeof nested.userInfo === "object") {
-      applyRole(nested.userInfo);
-      return root;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        return data;
     }
-    if (nested.user && typeof nested.user === "object") {
-      applyRole(nested.user);
-      return root;
+    const root = { ...data };
+    const applyRole = (target) => {
+        target.role = role;
+    };
+    if (root.userInfo && typeof root.userInfo === "object") {
+        applyRole(root.userInfo);
+        return root;
     }
-    applyRole(nested);
+    if (root.user && typeof root.user === "object") {
+        applyRole(root.user);
+        return root;
+    }
+    if (root.data && typeof root.data === "object") {
+        const nested = root.data;
+        if (nested.userInfo && typeof nested.userInfo === "object") {
+            applyRole(nested.userInfo);
+            return root;
+        }
+        if (nested.user && typeof nested.user === "object") {
+            applyRole(nested.user);
+            return root;
+        }
+        applyRole(nested);
+        return root;
+    }
+    applyRole(root);
     return root;
-  }
-  applyRole(root);
-  return root;
 }
 async function enrichAuthProfileResponse(path, status, data) {
-  if (status < 200 || status >= 300) return data;
-  if (!AUTH_PROFILE_PATHS.some((segment) => path.includes(segment))) {
-    return data;
-  }
-  const profile = extractAuthProfile(data);
-  if (!profile?.username) return data;
-  try {
-    const synced = await syncUserProfile({
-      username: profile.username,
-      office: profile.office ?? null,
-      description: profile.description ?? null,
-    });
-    return mergeRoleIntoPayload(data, synced.role);
-  } catch {
-    return data;
-  }
+    if (status < 200 || status >= 300)
+        return data;
+    if (!AUTH_PROFILE_PATHS.some((segment) => path.includes(segment))) {
+        return data;
+    }
+    const profile = extractAuthProfile(data);
+    if (!profile?.username)
+        return data;
+    try {
+        const synced = await syncUserProfile({
+            username: profile.username,
+            office: profile.office ?? null,
+            description: profile.description ?? null,
+        });
+        return mergeRoleIntoPayload(data, synced.role);
+    }
+    catch {
+        return data;
+    }
 }
 function shouldFilterProductList(path) {
-  return path.includes("/v1/product/list");
+    return path.includes("/v1/product/list");
 }
+function readJwtOffice(jwtUser) {
+    if (!jwtUser)
+        return null;
+    const office = jwtUser.office ?? jwtUser.location;
+    return typeof office === "string" && office.trim() ? office.trim() : null;
+}
+// Sesi app: baca profil dari JWT cookie + tabel User lokal (bukan proxy upstream).
+router.get("/auth/getUserInfo", async (req, res) => {
+    try {
+        const jwtUser = req
+            .user;
+        const username = readJwtUsername(jwtUser);
+        if (!username) {
+            return res
+                .status(401)
+                .json({ success: false, message: "User tidak ditemukan." });
+        }
+        const jwtProfile = extractAuthProfileFields(jwtUser) ?? {
+            username,
+            office: readJwtOffice(jwtUser) ?? undefined,
+        };
+        const synced = await syncUserProfile({
+            username,
+            office: jwtProfile.office ?? null,
+            description: jwtProfile.description ?? null,
+            mongooseId: readJwtMongooseId(jwtUser),
+        });
+        const payload = {
+            success: true,
+            data: {
+                username: synced.username,
+                office: synced.office ?? jwtProfile.office ?? null,
+                description: jwtProfile.description ?? null,
+                role: synced.role,
+                type: synced.type,
+            },
+        };
+        return res.json(mergeRoleIntoPayload(payload, synced.role));
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "Gagal memuat profil user";
+        return res.status(500).json({ success: false, message });
+    }
+});
 // Forward semua request ke Source of Truth (SO)
 router.all(/.*/, async (req, res) => {
-  try {
-    const path = req.originalUrl.replace(/^\/so\/api/, "/api");
-    const forwardBody = buildForwardBody(req, path);
-    const hasJsonBody =
-      req.method !== "GET" &&
-      req.method !== "HEAD" &&
-      forwardBody !== undefined &&
-      forwardBody !== null;
-    const response = await axios({
-      method: req.method,
-      url: process.env.DATABASE_REUSABLE_API + path,
-      headers: buildForwardHeaders(req, hasJsonBody),
-      data: hasJsonBody ? forwardBody : undefined,
-      validateStatus: () => true,
-      proxy: false,
-    });
-    if (shouldFilterProductList(path)) {
-      response.data = filterProductListPayload(response.data);
-    }
-    const refresh_token =
-      response?.data?.refresh_token ||
-      response?.data?.data?.refresh_token ||
-      response?.data?.refreshToken ||
-      response?.data?.data?.refreshToken;
-    const access_token =
-      response?.data?.access_token ||
-      response?.data?.data?.access_token ||
-      response?.data?.accessToken ||
-      response?.data?.data?.accessToken;
-    const isProd = process.env.NODE_ENV === "production";
-    // Check if this is logout request (accept any HTTP method for /logout)
-    const isLogout = req.originalUrl.includes("/logout");
-    if (isLogout) {
-      res.clearCookie("refresh_token", {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        path: "/",
-      });
-      res.clearCookie("access_token", {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        path: "/",
-      });
-    } else {
-      // Set cookie hanya jika token valid string
-      if (typeof refresh_token === "string" && refresh_token.trim() !== "") {
-        res.cookie("refresh_token", refresh_token, {
-          httpOnly: true,
-          secure: false,
-          sameSite: "lax",
-          path: "/",
-          maxAge: 7 * 24 * 60 * 60 * 1000,
+    try {
+        const path = req.originalUrl.replace(/^\/so\/api/, "/api");
+        const forwardBody = buildForwardBody(req, path);
+        const hasJsonBody = req.method !== "GET" &&
+            req.method !== "HEAD" &&
+            forwardBody !== undefined &&
+            forwardBody !== null;
+        const response = await axios({
+            method: req.method,
+            url: getReusableApiBase() + path,
+            headers: buildForwardHeaders(req, hasJsonBody),
+            data: hasJsonBody ? forwardBody : undefined,
+            validateStatus: () => true,
+            proxy: false,
         });
-      }
-      if (typeof access_token === "string" && access_token.trim() !== "") {
-        res.cookie("access_token", access_token, {
-          httpOnly: true,
-          secure: false,
-          sameSite: "lax",
-          path: "/",
-          maxAge: 5 * 60 * 1000,
+        if (shouldFilterProductList(path)) {
+            response.data = filterProductListPayload(response.data);
+        }
+        const refresh_token = response?.data?.refresh_token ||
+            response?.data?.data?.refresh_token ||
+            response?.data?.refreshToken ||
+            response?.data?.data?.refreshToken;
+        const access_token = response?.data?.access_token ||
+            response?.data?.data?.access_token ||
+            response?.data?.accessToken ||
+            response?.data?.data?.accessToken;
+        const isProd = process.env.NODE_ENV === "production";
+        // Check if this is logout request (accept any HTTP method for /logout)
+        const isLogout = req.originalUrl.includes("/logout");
+        if (isLogout) {
+            res.clearCookie("refresh_token", {
+                httpOnly: true,
+                secure: false,
+                sameSite: "lax",
+                path: "/",
+            });
+            res.clearCookie("access_token", {
+                httpOnly: true,
+                secure: false,
+                sameSite: "lax",
+                path: "/",
+            });
+        }
+        else {
+            // Set cookie hanya jika token valid string
+            if (typeof refresh_token === "string" && refresh_token.trim() !== "") {
+                res.cookie("refresh_token", refresh_token, {
+                    httpOnly: true,
+                    secure: false,
+                    sameSite: "lax",
+                    path: "/",
+                    maxAge: 7 * 24 * 60 * 60 * 1000,
+                });
+            }
+            if (typeof access_token === "string" && access_token.trim() !== "") {
+                res.cookie("access_token", access_token, {
+                    httpOnly: true,
+                    secure: false,
+                    sameSite: "lax",
+                    path: "/",
+                    maxAge: 5 * 60 * 1000,
+                });
+            }
+        }
+        const responseData = await enrichAuthProfileResponse(path, response.status, response.data);
+        return res.status(response.status).json(responseData);
+    }
+    catch (error) {
+        const axiosError = error;
+        console.log(error);
+        console.error("SO proxy error:", axiosError?.message);
+        if (req.originalUrl.includes("/logout")) {
+            res.clearCookie("refresh_token", {
+                httpOnly: true,
+                secure: false,
+                sameSite: "lax",
+                path: "/",
+            });
+            res.clearCookie("access_token", {
+                httpOnly: true,
+                secure: false,
+                sameSite: "lax",
+                path: "/",
+            });
+        }
+        return res.status(500).json({
+            message: error?.response?.data?.message ||
+                "Gagal terhubung ke Backend Source of Truth (midcsi)",
         });
-      }
     }
-    const responseData = await enrichAuthProfileResponse(
-      path,
-      response.status,
-      response.data,
-    );
-    return res.status(response.status).json(responseData);
-  } catch (error) {
-    const axiosError = error;
-    console.log(error);
-    console.error("SO proxy error:", axiosError?.message);
-    if (req.originalUrl.includes("/logout")) {
-      res.clearCookie("refresh_token", {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        path: "/",
-      });
-      res.clearCookie("access_token", {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        path: "/",
-      });
-    }
-    return res.status(500).json({
-      message:
-        error?.response?.data?.message ||
-        "Gagal terhubung ke Backend Source of Truth (midcsi)",
-    });
-  }
 });
 export default router;
