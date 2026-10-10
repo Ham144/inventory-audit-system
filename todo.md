@@ -1,4 +1,3 @@
-revisi:
 [x] fix: filtering location di admin belum match dengan office
 [x] mod: page admin masih terbuka ke operator
 [x] fix: tombol "terapkan" kadang tidak berfungsi
@@ -45,3 +44,13 @@ fitur request 27/07/2026
 [x] feat: make the akhir periode field on open-new-period modal, optional
 [x] feat: clear out "my logs" data by putting the frontend default filter "dari" "sampai" using startPeriod, endPeriod of the user's location
 [x] feat: Buka / Tutup periode (ganti Cut-off) — FREE/OPNAME per gudang, isi systemQty saat buka, reset SkuReminder saat tutup
+[x] nama rak muncul di excel report
+[x] buka periode bisa di klik ulang
+
+// 2026-09 / 2026-10
+[x] SOAP inventory diganti ke GetInventoryOnlyByLocation (1 SKU / call)
+[x] penguncian SESUAI menghormati openedAt / closedAt periode gudang
+[x] auto-pilih lokasi di /input mengikuti preferensi halaman lain
+[x] cek rescan dipindah ke backend (sku+rak+office+operator+periode+step)
+[x] ScanLog.step: step 1 hitungan awal, step 2 setelah delegasi (tidak di-sum ke step 1)
+[x] admin menampilkan badge step (S1/S2) dan Delegasi → operator

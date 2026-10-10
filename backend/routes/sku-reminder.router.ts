@@ -255,7 +255,7 @@ async function loadSystemQtyBySku(
     );
   }
 
-  // batch default 50 + concurrency — jangan batchSize:1 untuk katalog penuh
+  // GetInventoryOnlyByLocation = 1 SKU/call; concurrency diatur di stock-soap
   return checkStockMulti({
     skus: uniqueSkus,
     locationCode,

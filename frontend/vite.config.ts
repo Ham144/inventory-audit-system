@@ -1,6 +1,11 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const frontendDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(frontendDir, "..");
 
 export default defineConfig({
   plugins: [
@@ -26,5 +31,9 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
+    fs: {
+      // Izinkan import todo.md dari root repo (mirror native di /docs)
+      allow: [frontendDir, repoRoot],
+    },
   },
 });

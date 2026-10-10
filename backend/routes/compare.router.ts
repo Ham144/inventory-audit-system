@@ -23,6 +23,7 @@ import {
   toScanGroups,
   reconcileApprovalAfterGroupChange,
   toScanGroup,
+  preferLatestStepScans,
   readOffice,
   tryAutoApproveUnanimousGroup,
   upsertScanQtyApproval,
@@ -189,7 +190,9 @@ async function buildNavRow(
 }
 
 async function reconcileStaleApprovals(whereClause: SessionScopeWhere) {
-  const scans = await prisma.scanLog.findMany({ where: whereClause });
+  const scans = preferLatestStepScans(
+    await prisma.scanLog.findMany({ where: whereClause }),
+  );
   const groups = new Map<string, typeof scans>();
 
   for (const scan of scans) {
@@ -222,14 +225,14 @@ async function reconcileStaleApprovals(whereClause: SessionScopeWhere) {
 
 async function buildScanCompareRows(whereClause: SessionScopeWhere) {
   await reconcileStaleApprovals(whereClause);
-  const [scans, approvals] = await Promise.all([
+  const [rawScans, approvals] = await Promise.all([
     prisma.scanLog.findMany({
       where: whereClause,
       orderBy: { createdAt: "desc" },
     }),
     findScanQtyApprovals(whereClause),
   ]);
-
+  const scans = preferLatestStepScans(rawScans);
   const approvalByKey = new Map<string, ScanQtyApprovalRow>(
     approvals.map((a: ScanQtyApprovalRow) => [
       approvalGroupKey(a.sessionId, a.sku, a.rak, a.office),
@@ -321,19 +324,24 @@ async function buildNavCompareRows(whereClause: SessionScopeWhere) {
     orderBy: { updatedAt: "desc" },
   });
 
-  const [approvals, scans] = await Promise.all([
+  const [approvals, rawScans] = await Promise.all([
     findScanQtyApprovals(whereClause),
     prisma.scanLog.findMany({
       where: whereClause,
       select: {
+        id: true,
         sessionId: true,
         sku: true,
         office: true,
         rak: true,
+        operator: true,
+        qty: true,
+        createdAt: true,
+        step: true,
       },
     }),
   ]);
-
+  const scans = preferLatestStepScans(rawScans);
   const physicalQtyByKey = new Map<string, number>();
   const raksWithScansByKey = new Map<string, Set<number>>();
   const resolvedRaksByKey = new Map<string, Set<number>>();
@@ -615,14 +623,16 @@ router.patch("/scan/:scanLogId", async (req: Request, res: Response) => {
       data: { qty: qtyNum },
     });
 
-    const groupScans = await prisma.scanLog.findMany({
-      where: {
-        sessionId: updated.sessionId,
-        sku: updated.sku,
-        rak: updated.rak,
-        office: access.scanGroup.office,
-      },
-    });
+    const groupScans = preferLatestStepScans(
+      await prisma.scanLog.findMany({
+        where: {
+          sessionId: updated.sessionId,
+          sku: updated.sku,
+          rak: updated.rak,
+          office: access.scanGroup.office,
+        },
+      }),
+    );
 
     await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
 
@@ -651,14 +661,16 @@ router.delete("/scan/:scanLogId", async (req: Request, res: Response) => {
 
     await prisma.scanLog.delete({ where: { id: scanLogId } });
 
-    const groupScans = await prisma.scanLog.findMany({
-      where: {
-        sessionId: scan.sessionId,
-        sku: scan.sku,
-        rak: scan.rak,
-        office: scanGroup.office,
-      },
-    });
+    const groupScans = preferLatestStepScans(
+      await prisma.scanLog.findMany({
+        where: {
+          sessionId: scan.sessionId,
+          sku: scan.sku,
+          rak: scan.rak,
+          office: scanGroup.office,
+        },
+      }),
+    );
 
     if (groupScans.length === 0) {
       await deleteGroupApproval(
@@ -1012,12 +1024,19 @@ router.patch(
           userOffice !== office
         ) {
           return res.status(400).json({
-            error: `User delegasi harus berada di kantor yang sama (${office})`,
+            error: `User delegasi harus berada di office(gudang) yang sama (${office})`,
           });
         }
       }
-
+      
       const approver = resolveApprover(req);
+
+      // Saat mendelegasikan: buka kunci SESUAI agar operator bisa input step 2 tanpa relogin/error.
+      const assigning = Boolean(delegatedTo?.trim());
+      const unlockSesuai =
+        assigning && item.status.toUpperCase() === "SESUAI"
+          ? { status: "SELISIH", updatedAt: new Date() }
+          : {};
 
       const updated = await prisma.compareItem.update({
         where: { id: item.id },
@@ -1025,6 +1044,7 @@ router.patch(
           delegatedTo: delegatedTo?.trim() || null,
           delegatedBy: delegatedTo?.trim() ? approver : null,
           delegatedAt: delegatedTo?.trim() ? new Date() : null,
+          ...unlockSesuai,
         } as never,
         include: { session: { select: SESSION_OFFICE_SELECT } },
       });

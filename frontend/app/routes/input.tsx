@@ -13,6 +13,8 @@ import ProductApi from "../api/product.api";
 import locationApi from "../api/LocationApi";
 import { logout } from "../api/authApi";
 import axiosInstance from "../api/axios-instance";
+import { findExistingScan } from "../api/opname.api";
+import { getAppUser } from "../api/opnameUserApi";
 import { useUserInfo } from "~/store";
 import { canScan, isOwner, isAdmin, userOffice } from "~/libs/user-access";
 import {
@@ -27,7 +29,7 @@ import {
   getAdminDefaultOffice,
   setAdminDefaultOffice,
 } from "~/libs/app-prefs";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { AppNavigation } from "~/components/AppNavigation";
 
 interface ProductItem {
@@ -44,14 +46,6 @@ interface ProductItem {
 
 function getProductSku(product: ProductItem): string {
   return (product.No || product.sku || "").trim();
-}
-
-interface ScanLogItem {
-  sku: string;
-  rak: number;
-  office?: string;
-  operator?: string;
-  qty?: number;
 }
 
 type RescanConfirm = {
@@ -89,7 +83,7 @@ export default function Scan() {
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(
     null,
   );
-  const { userInfo, clearUserInfo } = useUserInfo();
+  const { userInfo, setUserInfo, clearUserInfo } = useUserInfo();
   const fixedOffice = userOffice(userInfo);
   const showOfficePicker = isOwner(userInfo) || !fixedOffice;
   const [locations, setLocations] = useState<LocationItem[]>([]);
@@ -98,6 +92,31 @@ export default function Scan() {
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
   const activeScanOffice = showOfficePicker ? pickedOffice : fixedOffice;
   const scanAllowed = canScan(userInfo, activeScanOffice);
+
+  // Refresh profil lokal saat buka /input — office/role yang baru di-assign admin
+  // tidak perlu logout/login ulang agar form bisa dipakai.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await getAppUser();
+        if (cancelled || !me?.username) return;
+        setUserInfo({
+          ...(userInfo ?? {}),
+          username: me.username,
+          office: me.office,
+          role: me.role ?? userInfo?.role,
+        });
+      } catch {
+        // biarkan profil cache; error auth ditangani AuthGate / axios
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // sengaja hanya saat mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [qty, setQty] = useState("");
   const [rak, setRak] = useState("1");
@@ -131,7 +150,6 @@ export default function Scan() {
 
   const lastSelectedSkuRef = useRef("");
   const navigate = useNavigate();
-  const operatorName = userInfo?.username ?? "";
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error" | "info";
@@ -142,20 +160,6 @@ export default function Scan() {
   const [isSaving, setIsSaving] = useState(false);
 
   const queryClient = useQueryClient();
-
-  const selectedSku = selectedProduct ? getProductSku(selectedProduct) : "";
-
-  const skuScansQuery = useQuery({
-    queryKey: ["opname", "scans-for-rak", activeScanOffice, selectedSku],
-    queryFn: async () => {
-      const res = await axiosInstance.get<ScanLogItem[]>("/api/opname/scans", {
-        params: { office: activeScanOffice, rak: "Semua" },
-      });
-      const rows = Array.isArray(res.data) ? res.data : [];
-      return rows.filter((row) => row.sku === selectedSku);
-    },
-    enabled: Boolean(activeScanOffice && selectedSku),
-  });
 
   useEffect(() => {
     if (
@@ -252,22 +256,6 @@ export default function Scan() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const findExistingOperatorScan = () => {
-    if (!operatorName || !selectedSku || !activeScanOffice) return null;
-    const rakNum = Number(rak);
-    if (!rakNum || rakNum <= 0) return null;
-
-    const match = (skuScansQuery.data ?? []).find(
-      (row) =>
-        row.sku === selectedSku &&
-        Number(row.rak) === rakNum &&
-        row.operator === operatorName &&
-        (row.office == null || row.office === activeScanOffice),
-    );
-
-    return match?.qty != null ? match : null;
-  };
-
   const submitScan = async () => {
     if (!selectedProduct || !activeScanOffice) return;
 
@@ -340,17 +328,34 @@ export default function Scan() {
       return;
     }
 
-    const existing = findExistingOperatorScan();
-    if (existing?.qty != null) {
-      setRescanConfirm({
-        previousQty: existing.qty,
-        addedQty: Number(qty),
+    setIsSaving(true);
+    try {
+      const existing = await findExistingScan({
+        sku: getProductSku(selectedProduct),
         rak: Number(rak),
+        office: activeScanOffice,
       });
-      return;
-    }
 
-    await submitScan();
+      if (existing.exists && existing.qty != null) {
+        setRescanConfirm({
+          previousQty: existing.qty,
+          addedQty: Number(qty),
+          rak: Number(rak),
+        });
+        setIsSaving(false);
+        return;
+      }
+
+      await submitScan();
+    } catch (err: any) {
+      const errorMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "Gagal cek scan sebelumnya";
+      showToast(errorMsg, "error");
+      setIsSaving(false);
+    }
   };
 
   useEffect(() => {

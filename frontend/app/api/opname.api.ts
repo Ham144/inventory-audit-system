@@ -32,6 +32,33 @@ export async function getScans(params?: { office?: string; rak?: string }) {
   return response.data;
 }
 
+export type FindExistingScanResult = {
+  exists: boolean;
+  qty: number | null;
+  /** true = operator ini sedang di step 2 (didelegasikan) */
+  delegated?: boolean;
+  step?: number;
+  sku: string;
+  rak: number;
+  office: string;
+  operator: string;
+  sessionId: string;
+  scanId?: string;
+};
+
+/** Cek scan IDENTIK di periode aktif: sku + rak + office + operator (+ sesi ONGOING). */
+export async function findExistingScan(payload: {
+  sku: string;
+  rak: number;
+  office: string;
+}): Promise<FindExistingScanResult> {
+  const response = await axiosInstance.post<FindExistingScanResult>(
+    "/api/opname/findExistingScan",
+    payload,
+  );
+  return response.data;
+}
+
 export async function traceLogs(params?: {
   office?: string;
   rak?: string;

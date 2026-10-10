@@ -8,7 +8,9 @@ const DOC_SECTIONS = [
   { id: "ringkasan", label: "Ringkasan" },
   { id: "role", label: "Role" },
   { id: "alur", label: "Alur Kerja" },
+  { id: "step", label: "Step & Delegasi" },
   { id: "menu", label: "Menu" },
+  { id: "riwayat", label: "Riwayat Perubahan" },
 ] as const;
 
 const APP_MENUS = [

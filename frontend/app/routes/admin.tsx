@@ -55,6 +55,7 @@ import { UserSessionBadge } from "~/components/UserSessionBadge";
 import {
   buildBulkCompareCsv,
   downloadCsv,
+  formatRakNames,
   type BulkCompareResultRow,
 } from "~/libs/compare-csv";
 import type { AxiosError } from "axios";
@@ -583,6 +584,18 @@ function NavCompareItem({
             <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200 font-mono mt-1.5 inline-block">
               {nav.office}
             </span>
+            {nav.delegatedTo?.trim() && (
+              <span
+                className="text-[10px] font-bold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200 mt-1.5 ml-1.5 inline-block"
+                title={
+                  nav.delegatedBy
+                    ? `Didelegasikan oleh ${nav.delegatedBy}`
+                    : "SKU didelegasikan untuk hitungan ulang (step 2)"
+                }
+              >
+                Delegasi → {nav.delegatedTo}
+              </span>
+            )}
             {nav.note?.trim() && (
               <p
                 className="text-xs text-amber-800 mt-1.5 line-clamp-2 leading-snug"
@@ -705,6 +718,18 @@ function NavCompareItem({
             <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md border border-slate-200 font-mono mt-1 inline-block">
               {nav.office}
             </span>
+            {nav.delegatedTo?.trim() && (
+              <span
+                className="text-[10px] font-bold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200 mt-1 ml-1.5 inline-block"
+                title={
+                  nav.delegatedBy
+                    ? `Didelegasikan oleh ${nav.delegatedBy}`
+                    : "SKU didelegasikan untuk hitungan ulang (step 2)"
+                }
+              >
+                Delegasi → {nav.delegatedTo}
+              </span>
+            )}
             {nav.note?.trim() && (
               <p
                 className="text-xs text-amber-800 mt-1 line-clamp-1"
@@ -862,6 +887,11 @@ function RakDetailRow({
           <span className="text-[10px] font-bold text-slate-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
             Rak {item.rak}
           </span>
+          {item.scans.some((s) => (s.step ?? 1) >= 2) && (
+            <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+              Step 2 (ulang)
+            </span>
+          )}
           <ScanStatusBadge row={item} />
           {isCurrentFinalCorrectionRak && (
             <span className="text-[10px] font-bold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded border border-violet-200">
@@ -923,8 +953,17 @@ function RakDetailRow({
                     : "border-red-200 bg-red-50/80"
               }`}
             >
-              <span className="text-slate-600 font-semibold truncate">
-                {scan.operator}
+              <span className="text-slate-600 font-semibold truncate flex items-center gap-1.5 min-w-0">
+                <span className="truncate">{scan.operator}</span>
+                {(scan.step ?? 1) >= 2 ? (
+                  <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-amber-800 bg-amber-50 border border-amber-200 px-1 py-0.5 rounded">
+                    S{scan.step}
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-slate-500 bg-slate-50 border border-slate-200 px-1 py-0.5 rounded">
+                    S1
+                  </span>
+                )}
               </span>
               <div className="flex items-center gap-1 shrink-0">
                 <span
@@ -1570,6 +1609,12 @@ export default function AdminPage() {
       setBulkProgress({ current: 0, total: eligible.length });
 
       const csvRows: BulkCompareResultRow[] = [];
+      const rakNamesFor = (sku: string, office: string) =>
+        formatRakNames(
+          (scanBySkuLocation.get(skuLocationKey(sku, office)) ?? []).map(
+            (r) => r.rak,
+          ),
+        );
 
       for (let i = 0; i < eligible.length; i++) {
         const nav = eligible[i];
@@ -1583,6 +1628,7 @@ export default function AdminPage() {
             physicalQty: result.physicalQty,
             systemQty: result.systemQty,
             status: result.status,
+            rakNames: rakNamesFor(result.sku, result.office),
             resolvedRakCount: result.resolvedRakCount,
             pendingRakCount: result.pendingRakCount,
             note: result.note ?? nav.note ?? "",
@@ -1597,6 +1643,7 @@ export default function AdminPage() {
             physicalQty: nav.physicalQty,
             systemQty: nav.systemQty,
             status: nav.status,
+            rakNames: rakNamesFor(nav.sku, nav.office),
             resolvedRakCount: nav.resolvedRakCount,
             pendingRakCount: nav.pendingRakCount,
             note: nav.note ?? "",
@@ -1614,6 +1661,7 @@ export default function AdminPage() {
           physicalQty: nav.physicalQty,
           systemQty: nav.systemQty,
           status: nav.status,
+          rakNames: rakNamesFor(nav.sku, nav.office),
           resolvedRakCount: nav.resolvedRakCount,
           pendingRakCount: nav.pendingRakCount,
           note: nav.note ?? "",
@@ -1641,20 +1689,25 @@ export default function AdminPage() {
   };
 
   const exportToCsv = () => {
-    const csvRows: BulkCompareResultRow[] = filteredNavRows.map((nav) => ({
-      sku: nav.sku,
-      name: nav.name,
-      office: nav.office,
-      physicalQty: nav.physicalQty,
-      systemQty: nav.systemQty,
-      status: nav.status,
-      resolvedRakCount: nav.resolvedRakCount,
-      pendingRakCount: nav.pendingRakCount,
-      note: nav.note ?? "",
-      hasil: "laporan",
-      keterangan:
-        nav.status === "belum_compare" ? "belum compare" : "sudah compare",
-    }));
+    const csvRows: BulkCompareResultRow[] = filteredNavRows.map((nav) => {
+      const rakDetails =
+        scanBySkuLocation.get(skuLocationKey(nav.sku, nav.office)) ?? [];
+      return {
+        sku: nav.sku,
+        name: nav.name,
+        office: nav.office,
+        physicalQty: nav.physicalQty,
+        systemQty: nav.systemQty,
+        status: nav.status,
+        rakNames: formatRakNames(rakDetails.map((r) => r.rak)),
+        resolvedRakCount: nav.resolvedRakCount,
+        pendingRakCount: nav.pendingRakCount,
+        note: nav.note ?? "",
+        hasil: "laporan" as const,
+        keterangan:
+          nav.status === "belum_compare" ? "belum compare" : "sudah compare",
+      };
+    });
 
     const csvContent = buildBulkCompareCsv(csvRows, dateFrom, dateTo);
     downloadCsv(`laporan-opname-${dateFrom}_${dateTo}.csv`, csvContent);

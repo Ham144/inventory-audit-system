@@ -5,6 +5,8 @@ export type BulkCompareResultRow = {
   physicalQty: number;
   systemQty: number;
   status: string;
+  /** Daftar nomor rak, mis. "Rak 1, Rak 2" */
+  rakNames: string;
   resolvedRakCount: number;
   pendingRakCount: number;
   note: string;
@@ -20,15 +22,25 @@ function csvEscape(value: string | number): string {
   return str;
 }
 
+export function formatRakNames(raks: number[]): string {
+  const unique = [
+    ...new Set(
+      raks.filter((n) => Number.isFinite(n) && n > 0).map((n) => Number(n)),
+    ),
+  ].sort((a, b) => a - b);
+  return unique.map((n) => `Rak ${n}`).join(", ");
+}
+
 export function buildBulkCompareCsv(
   rows: BulkCompareResultRow[],
-  dateFrom: string,
-  dateTo: string,
+  _dateFrom: string,
+  _dateTo: string,
 ): string {
   const header = [
     "SKU",
     "Nama Barang",
     "Lokasi",
+    "Nama Rak",
     "Fisik",
     "ERP",
     "Selisih",
@@ -41,13 +53,16 @@ export function buildBulkCompareCsv(
   ].join(",");
 
   const dataRows = rows.map((r) => {
-    const isCompared = r.hasil === "dibandingkan" || (r.hasil === "laporan" && r.status !== "belum_compare");
+    const isCompared =
+      r.hasil === "dibandingkan" ||
+      (r.hasil === "laporan" && r.status !== "belum_compare");
     const selisih = isCompared ? r.physicalQty - r.systemQty : "";
-    
+
     return [
       csvEscape(r.sku),
       csvEscape(r.name),
       csvEscape(r.office),
+      csvEscape(r.rakNames || "—"),
       csvEscape(r.physicalQty),
       isCompared ? csvEscape(r.systemQty) : "—",
       selisih !== "" ? csvEscape(selisih) : "—",

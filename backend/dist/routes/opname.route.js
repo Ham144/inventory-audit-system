@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
-import { mapLocationToOfficeAsync, mapOfficeToLocation, resolveLocationCode, resolveOfficeName, } from "../utils/office-mapping.js";
+import { mapLocationToOfficeAsync, mapOfficeToLocation, resolveLocationCode, resolveOfficeAliases, resolveOfficeName, } from "../utils/office-mapping.js";
 import { reconcileApprovalAfterGroupChange, deleteScanQtyApprovals, toScanGroups, readOffice, sumApprovedQtyForSkuLocation, } from "../utils/scan-approval.js";
 import { assertScanAccess, isOwner, canAccessAdmin, readJwtUsername, readJwtMongooseId, resolveAppUser, resolveOfficeFilter, } from "../utils/app-user.js";
 import { listUsers, syncUserProfile, updateUserRole, updateUserOffice, deleteUser, upsertUser, findUserByUsername, } from "../utils/user-store.js";
@@ -310,9 +310,11 @@ async function seedSessionCatalog(sessionId, tx) {
     }
 }
 async function getOrCreateActiveSession(office) {
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
     let session = await prisma.opnameSession.findFirst({
         where: {
-            office,
+            office: { in: officeKeys },
             status: "ONGOING",
         },
     });
@@ -331,7 +333,8 @@ async function getOrCreateActiveSession(office) {
 async function sessionScopeWhere(officeCode) {
     const office = officeCode === "Semua"
         ? "Semua"
-        : await mapLocationToOfficeAsync(officeCode);
+        : (await resolveOfficeName(officeCode)) ??
+            (await mapLocationToOfficeAsync(officeCode));
     if (office === "Semua") {
         const activeSessions = await prisma.opnameSession.findMany({
             where: { status: "ONGOING" },
@@ -339,8 +342,23 @@ async function sessionScopeWhere(officeCode) {
         const sessionIds = activeSessions.map((s) => s.id);
         return { sessionId: { in: sessionIds } };
     }
-    const session = await getOrCreateActiveSession(office);
-    return { sessionId: session.id };
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
+    const sessions = await prisma.opnameSession.findMany({
+        where: {
+            office: { in: officeKeys },
+            status: "ONGOING",
+        },
+        orderBy: { createdAt: "desc" },
+    });
+    if (sessions.length === 0) {
+        const session = await getOrCreateActiveSession(office);
+        return { sessionId: session.id };
+    }
+    if (sessions.length === 1) {
+        return { sessionId: sessions[0].id };
+    }
+    return { sessionId: { in: sessions.map((s) => s.id) } };
 }
 // 1. GET active session
 router.get("/session/active", async (req, res) => {
@@ -484,7 +502,7 @@ router.post("/scan", async (req, res) => {
             rak: rakNum,
         });
         await markSkuReminderResolved(sku, loc);
-        // Initial SOT: mode OPNAME → SKU baru (atau belum punya SOT) diisi SOAP otomatis
+        // Initial SOT: mode OPNAME → SKU baru / BELUM_COMPARE diisi SOAP otomatis
         const periodMode = await getOfficePeriodMode(loc);
         let sotQty = compareItem?.systemQty ?? 0;
         let needsSotFill = periodMode === "OPNAME" &&

@@ -22,6 +22,8 @@ export type ScanCompareRow = {
     id: string;
     qty: number;
     operator: string;
+    /** 1 = hitungan awal, 2+ = hitungan ulang setelah delegasi */
+    step: number;
     createdAt: string;
   }[];
 };

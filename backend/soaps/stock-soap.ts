@@ -15,18 +15,19 @@ const SOAP_ENV = {
   workstation: process.env.SOAP_WORKSTATION?.trim() || "",
 };
 
-/** How many SKUs to send in one GetInventoryByLocationMultiple call. */
+/**
+ * Legacy name — NAV baru hanya 1 SKU/call (GetInventoryOnlyByLocation).
+ * Batch size diabaikan; tetap diekspos supaya env lama tidak error.
+ */
 export function getSoapStockBatchSize(): number {
-  const raw = Number(process.env.SOAP_STOCK_BATCH_SIZE || 50);
-  if (!Number.isFinite(raw) || raw < 1) return 50;
-  return Math.min(Math.floor(raw), 200);
+  return 1;
 }
 
-/** Parallel SOAP batch requests (default 4). */
+/** Parallel SOAP single-SKU requests (default 8). */
 export function getSoapStockConcurrency(): number {
-  const raw = Number(process.env.SOAP_STOCK_CONCURRENCY || 4);
-  if (!Number.isFinite(raw) || raw < 1) return 4;
-  return Math.min(Math.floor(raw), 16);
+  const raw = Number(process.env.SOAP_STOCK_CONCURRENCY || 8);
+  if (!Number.isFinite(raw) || raw < 1) return 8;
+  return Math.min(Math.floor(raw), 32);
 }
 
 function getSoapTimeoutMs(): number {
@@ -44,60 +45,34 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
-function buildInventoryXml(
-  skus: string[],
-  locationCode: string,
-): string {
+/** Request 1 SKU — GetInventoryOnlyByLocation (NAV baru, tidak support multiple). */
+function buildInventoryXml(sku: string, locationCode: string): string {
+  const itemNo = escapeXml(sku.trim());
   const loc = escapeXml(locationCode.trim().toUpperCase());
-  const rows = skus
-    .map((sku) => sku.trim())
-    .filter(Boolean)
-    .map(
-      (sku) => `                <InventoryPerLocation xmlns="urn:microsoft-dynamics-nav/xmlports/x50033">
-                    <ItemNo>${escapeXml(sku)}</ItemNo>
-                    <LocationCode>${loc}</LocationCode>
-                    <Quantity>0</Quantity>
-                </InventoryPerLocation>`,
-    )
-    .join("\n");
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <Envelope xmlns="http://schemas.xmlsoap.org/soap/envelope/">
     <Body>
-        <GetInventoryByLocationMultiple xmlns="urn:microsoft-dynamics-schemas/codeunit/WSNav">
-            <xml_WSInventory>
-${rows}
-            </xml_WSInventory>
-        </GetInventoryByLocationMultiple>
+        <GetInventoryOnlyByLocation xmlns="urn:microsoft-dynamics-schemas/codeunit/WSNav">
+            <itemNo>${itemNo}</itemNo>
+            <locationCode>${loc}</locationCode>
+            <inventory>0</inventory>
+        </GetInventoryOnlyByLocation>
     </Body>
 </Envelope>`;
 }
 
-function parseInventorySoapBody(body: string): StockQtyRow[] {
-  const rows: StockQtyRow[] = [];
-  const blockRegex =
-    /<InventoryPerLocation\b[^>]*>([\s\S]*?)<\/InventoryPerLocation>/gi;
+/** Parse <inventory>N</inventory> dari GetInventoryOnlyByLocation_Result. */
+function parseInventorySoapBody(body: string): number {
+  // Ambil nilai di Result dulu (lebih spesifik), fallback ke tag inventory mana pun
+  const fromResult =
+    body.match(
+      /<GetInventoryOnlyByLocation_Result\b[^>]*>[\s\S]*?<inventory>([^<]*)<\/inventory>/i,
+    )?.[1] ??
+    body.match(/<inventory>([^<]*)<\/inventory>/i)?.[1];
 
-  for (const match of body.matchAll(blockRegex)) {
-    const block = match[1] ?? "";
-    const sku =
-      block.match(/<ItemNo>([^<]*)<\/ItemNo>/i)?.[1]?.trim() ?? "";
-    const locationCode =
-      block.match(/<LocationCode>([^<]*)<\/LocationCode>/i)?.[1]?.trim() ??
-      "";
-    const quantityRaw =
-      block.match(/<Quantity>([^<]*)<\/Quantity>/i)?.[1]?.trim() ?? "0";
-    const quantity = Number(quantityRaw);
-
-    if (!sku) continue;
-    rows.push({
-      sku,
-      locationCode,
-      quantity: Number.isFinite(quantity) ? quantity : 0,
-    });
-  }
-
-  return rows;
+  const quantity = Number((fromResult ?? "0").trim());
+  return Number.isFinite(quantity) ? quantity : 0;
 }
 
 const ntlmPost = promisify(httpntlm.post.bind(httpntlm)) as (
@@ -124,7 +99,7 @@ async function postInventorySoap(xml: string): Promise<string> {
       headers: {
         "Content-Type": "text/xml; charset=utf-8",
         SOAPAction:
-          "urn:microsoft-dynamics-schemas/codeunit/WSNav:GetInventoryByLocationMultiple",
+          "urn:microsoft-dynamics-schemas/codeunit/WSNav:GetInventoryOnlyByLocation",
       },
     }),
     new Promise<never>((_, reject) => {
@@ -145,14 +120,6 @@ async function postInventorySoap(xml: string): Promise<string> {
   }
 
   return String(response.body ?? "");
-}
-
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
 }
 
 async function mapPool<T, R>(
@@ -180,8 +147,8 @@ async function mapPool<T, R>(
 }
 
 /**
- * Query NAV inventory for many SKUs at one location.
- * Batch + concurrency — jangan pakai batchSize 1 untuk katalog penuh.
+ * Query NAV inventory untuk banyak SKU di satu location.
+ * NAV hanya 1-1 → loop GetInventoryOnlyByLocation dengan concurrency.
  */
 export async function checkStockMulti(input: {
   skus: string[];
@@ -198,31 +165,28 @@ export async function checkStockMulti(input: {
   const qtyBySku = new Map<string, number>();
   if (!locationCode || skus.length === 0) return qtyBySku;
 
-  const batchSize = input.batchSize ?? getSoapStockBatchSize();
   const concurrency = input.concurrency ?? getSoapStockConcurrency();
-  const batches = chunkArray(skus, batchSize);
 
   console.log(
-    `[SOAP] checkStockMulti location=${locationCode} skus=${skus.length} batches=${batches.length} batchSize=${batchSize} concurrency=${concurrency}`,
+    `[SOAP] checkStockMulti GetInventoryOnlyByLocation location=${locationCode} skus=${skus.length} concurrency=${concurrency}`,
   );
 
-  await mapPool(batches, concurrency, async (batch, batchIndex) => {
-    const xml = buildInventoryXml(batch, locationCode);
-    const body = await postInventorySoap(xml);
-    const rows = parseInventorySoapBody(body);
-
-    for (const sku of batch) {
+  let done = 0;
+  await mapPool(skus, concurrency, async (sku) => {
+    try {
+      const xml = buildInventoryXml(sku, locationCode);
+      const body = await postInventorySoap(xml);
+      const quantity = parseInventorySoapBody(body);
+      qtyBySku.set(sku.toUpperCase(), quantity);
+    } catch (err) {
+      console.error(
+        `[SOAP] gagal SKU=${sku} loc=${locationCode}:`,
+        err instanceof Error ? err.message : err,
+      );
       qtyBySku.set(sku.toUpperCase(), 0);
     }
-    for (const row of rows) {
-      qtyBySku.set(row.sku.toUpperCase(), row.quantity);
-    }
 
-    if ((batchIndex + 1) % 10 === 0 || batchIndex + 1 === batches.length) {
-      console.log(
-        `[SOAP] progress ${batchIndex + 1}/${batches.length} batches`,
-      );
-    }
+    done += 1;
   });
 
   return qtyBySku;
@@ -236,7 +200,6 @@ export async function checkStockOne(
   const map = await checkStockMulti({
     skus: [sku],
     locationCode,
-    batchSize: 1,
     concurrency: 1,
   });
   return map.get(sku.trim().toUpperCase()) ?? 0;

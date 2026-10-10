@@ -1,6 +1,6 @@
 import express from "express";
 import { prisma } from "../config/db.js";
-import { mapLocationToOfficeAsync, resolveOfficeName, } from "../utils/office-mapping.js";
+import { mapLocationToOfficeAsync, resolveOfficeAliases, resolveOfficeName, } from "../utils/office-mapping.js";
 import { filterNavCompareRows, filterScanCompareRows, parseCompareQueryFilters, validateDateRange, } from "../utils/compare-filters.js";
 import { approvalGroupKey, countRakStatsForSkuLocation, deleteGroupApproval, findScanQtyApprovals, groupHasOperatorQtyConflict, navAggregateKey, sumApprovedQtyForSkuLocation, toOperatorScanEntries, toScanGroups, reconcileApprovalAfterGroupChange, toScanGroup, readOffice, tryAutoApproveUnanimousGroup, upsertScanQtyApproval, clearStaleSystemApproval, } from "../utils/scan-approval.js";
 import { canAccessAdmin, resolveAppUser, } from "../utils/app-user.js";
@@ -9,9 +9,11 @@ import { getOfficePeriodMode } from "../utils/office-period-store.js";
 import { isSkuLockedAsSesuai } from "../utils/compare-sesuai.js";
 const SESSION_OFFICE_SELECT = { office: true };
 async function getOrCreateActiveSession(office) {
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
     let session = await prisma.opnameSession.findFirst({
         where: {
-            office,
+            office: { in: officeKeys },
             status: "ONGOING",
         },
         orderBy: { createdAt: "desc" },
@@ -30,7 +32,8 @@ async function getOrCreateActiveSession(office) {
 async function sessionScopeWhere(officeCode) {
     const office = officeCode === "Semua"
         ? "Semua"
-        : await mapLocationToOfficeAsync(officeCode);
+        : (await resolveOfficeName(officeCode)) ??
+            (await mapLocationToOfficeAsync(officeCode));
     if (office === "Semua") {
         const activeSessions = await prisma.opnameSession.findMany({
             where: { status: "ONGOING" },
@@ -38,8 +41,23 @@ async function sessionScopeWhere(officeCode) {
         const sessionIds = activeSessions.map((s) => s.id);
         return { sessionId: { in: sessionIds } };
     }
-    const session = await getOrCreateActiveSession(office);
-    return { sessionId: session.id };
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
+    const sessions = await prisma.opnameSession.findMany({
+        where: {
+            office: { in: officeKeys },
+            status: "ONGOING",
+        },
+        orderBy: { createdAt: "desc" },
+    });
+    if (sessions.length === 0) {
+        const session = await getOrCreateActiveSession(office);
+        return { sessionId: session.id };
+    }
+    if (sessions.length === 1) {
+        return { sessionId: sessions[0].id };
+    }
+    return { sessionId: { in: sessions.map((s) => s.id) } };
 }
 function errorMessage(error) {
     return error instanceof Error ? error.message : "Unknown error";

@@ -33,8 +33,9 @@ model ScanLog {
   
   sessionId String
   session   OpnameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
+  
   approval ScanQtyApproval?
+  step Int @default(1)
 
   @@index([sku])
   @@index([sessionId])

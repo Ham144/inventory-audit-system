@@ -39,6 +39,7 @@ export type ScanGroup = {
   qty: number;
   operator: string;
   createdAt: Date;
+  step: number;
 };
 
 export type ScanLogLike = {
@@ -51,6 +52,7 @@ export type ScanLogLike = {
   createdAt: Date;
   office?: string;
   locationCode?: string;
+  step?: number | null;
 };
 
 export function toScanGroup(scan: ScanLogLike): ScanGroup {
@@ -67,11 +69,49 @@ export function toScanGroup(scan: ScanLogLike): ScanGroup {
     qty: scan.qty,
     operator: scan.operator,
     createdAt: scan.createdAt,
+    step: Number(scan.step ?? 1) || 1,
   };
 }
 
 export function toScanGroups(scans: ScanLogLike[]): ScanGroup[] {
   return scans.map(toScanGroup);
+}
+
+/**
+ * Per operator+sku+rak+office ambil step tertinggi saja.
+ * Step 2 (hasil delegasi) menggantikan step 1 untuk compare/approval.
+ */
+export function preferLatestStepScans<T extends ScanLogLike>(scans: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const scan of scans) {
+    const office = scan.office ?? scan.locationCode ?? "";
+    const key = `${scan.sessionId}|${scan.sku}|${scan.rak}|${office}|${scan.operator}`;
+    const step = Number(scan.step ?? 1) || 1;
+    const prev = best.get(key);
+    const prevStep = Number(prev?.step ?? 1) || 1;
+    if (!prev || step > prevStep) {
+      best.set(key, scan);
+      continue;
+    }
+    if (
+      step === prevStep &&
+      prev &&
+      scan.createdAt > prev.createdAt
+    ) {
+      best.set(key, scan);
+    }
+  }
+  return [...best.values()];
+}
+
+/** Step scan: 1 = hitungan awal, 2 = hitungan ulang setelah didelegasikan. */
+export function resolveScanStep(
+  delegatedTo: string | null | undefined,
+  operator: string,
+): number {
+  const target = delegatedTo?.trim() ?? "";
+  if (!target) return 1;
+  return target.toLowerCase() === operator.trim().toLowerCase() ? 2 : 1;
 }
 
 export function readOffice(row: {
@@ -132,6 +172,7 @@ export function toOperatorScanEntries(groupScans: ScanGroup[]) {
     id: latestScan.id,
     qty,
     operator,
+    step: latestScan.step,
     createdAt: latestScan.createdAt.toISOString(),
   }));
 }

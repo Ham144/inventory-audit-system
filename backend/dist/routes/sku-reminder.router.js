@@ -2,49 +2,58 @@ import express from "express";
 import axios from "axios";
 import { prisma } from "../config/db.js";
 import { canAccessAdmin, resolveAppUser } from "../utils/app-user.js";
-import { mapOfficeToLocation, resolveLocationCode, resolveOfficeName, } from "../utils/office-mapping.js";
+import { mapOfficeToLocation, resolveLocationCode, resolveOfficeAliases, resolveOfficeName, } from "../utils/office-mapping.js";
 import { findUserByUsername } from "../utils/user-store.js";
 import { filterHiddenProducts, isHiddenProductSku, readProductSkuFromItem, } from "../utils/product-filter.js";
 import { getReusableApiBase, getReusableApiHeaders, } from "../utils/reusable-api.js";
 import { checkStockMulti, isSoapStockConfigured, } from "../soaps/stock-soap.js";
-import { resolveStockQty } from "../types/catalog.js";
 import { closeOfficePeriod, getOfficePeriod, openOfficePeriod, } from "../utils/office-period-store.js";
 import { sumApprovedQtyForSkuLocation } from "../utils/scan-approval.js";
 import { delegateSkuReminder, getSkuReminderById, getSkuReminderSummary, listSkuReminders, markManySkuRemindersResolved, markSkuReminderResolved as markSkuReminderResolvedInStore, syncSkuReminderCatalogForOffice, } from "../utils/sku-reminder-store.js";
 const router = express.Router();
 const zeroQtyFilterLocks = new Map();
 async function hideZeroQtySkuReminders(input) {
-    if (!isSoapStockConfigured())
-        return 0;
     const office = input.office.trim();
     const locationCode = input.locationCode.trim().toUpperCase();
     if (!office || !locationCode)
         return 0;
-    const lockKey = `${office}::${locationCode}`;
-    const existing = zeroQtyFilterLocks.get(lockKey);
-    if (existing)
-        return existing;
-    const job = (async () => {
-        const sourceSkus = input.skus ??
-            (await listSkuReminders(office, "unresolved")).map((row) => row.sku);
-        if (!sourceSkus.length)
+    const sourceSkus = input.skus ??
+        (await listSkuReminders(office, "unresolved")).map((row) => row.sku);
+    if (!sourceSkus.length)
+        return 0;
+    let qtyBySku = input.qtyBySku;
+    if (!qtyBySku) {
+        if (!isSoapStockConfigured())
             return 0;
-        const qtyBySku = await checkStockMulti({
-            skus: sourceSkus,
-            locationCode,
+        const lockKey = `${office}::${locationCode}`;
+        const existing = zeroQtyFilterLocks.get(lockKey);
+        if (existing)
+            return existing;
+        const job = (async () => {
+            const fetched = await checkStockMulti({
+                skus: sourceSkus,
+                locationCode,
+            });
+            const zeroSkus = sourceSkus.filter((sku) => {
+                const qty = fetched.get(sku.trim().toUpperCase());
+                return qty === undefined || qty < 1;
+            });
+            if (!zeroSkus.length)
+                return 0;
+            return markManySkuRemindersResolved(zeroSkus, office);
+        })().finally(() => {
+            zeroQtyFilterLocks.delete(lockKey);
         });
-        const zeroSkus = sourceSkus.filter((sku) => {
-            const qty = qtyBySku.get(sku.trim().toUpperCase());
-            return qty === undefined || qty < 1;
-        });
-        if (!zeroSkus.length)
-            return 0;
-        return markManySkuRemindersResolved(zeroSkus, office);
-    })().finally(() => {
-        zeroQtyFilterLocks.delete(lockKey);
+        zeroQtyFilterLocks.set(lockKey, job);
+        return job;
+    }
+    const zeroSkus = sourceSkus.filter((sku) => {
+        const qty = qtyBySku.get(sku.trim().toUpperCase());
+        return qty === undefined || qty < 1;
     });
-    zeroQtyFilterLocks.set(lockKey, job);
-    return job;
+    if (!zeroSkus.length)
+        return 0;
+    return markManySkuRemindersResolved(zeroSkus, office);
 }
 function errorMessage(error) {
     return error instanceof Error ? error.message : "Unknown error";
@@ -80,8 +89,12 @@ function isActiveProduct(item) {
         !parseBoolLike(item.Blocked_MA) &&
         !parseBoolLike(item.Blocked_Services));
 }
-// periode baru
+// periode baru — daftar SKU aktif dari katalog produk (bukan stock qty)
 async function startNewPeriod(limit = 5000) {
+    const products = await fetchActiveCatalogProducts(limit);
+    return products.map((p) => p.sku);
+}
+async function fetchActiveCatalogProducts(limit = 5000) {
     const response = await axios.get(`${getReusableApiBase()}/api/v1/product/list`, {
         params: { limit },
         headers: getReusableApiHeaders(),
@@ -99,22 +112,50 @@ async function startNewPeriod(limit = 5000) {
             ? payload.data
             : [];
     const productList = filterHiddenProducts(rawList);
-    const skuSet = new Set();
+    const bySku = new Map();
     for (const item of productList) {
         if (!item || typeof item !== "object" || Array.isArray(item))
             continue;
         if (!isActiveProduct(item))
             continue;
         const sku = readProductSkuFromItem(item);
-        if (sku)
-            skuSet.add(sku);
+        if (!sku)
+            continue;
+        const record = item;
+        const name = (typeof record.Description === "string" && record.Description.trim()) ||
+            (typeof record.Description_3 === "string" &&
+                record.Description_3.trim()) ||
+            "";
+        if (!bySku.has(sku.toUpperCase())) {
+            bySku.set(sku.toUpperCase(), { sku, name });
+        }
     }
-    return [...skuSet];
+    return [...bySku.values()];
+}
+/** Pastikan semua SKU katalog punya baris CompareItem di sesi (systemQty masih 0 sampai SOAP). */
+async function ensureSessionCompareCatalog(sessionId, limit = 5000) {
+    const products = await fetchActiveCatalogProducts(limit);
+    if (!products.length)
+        return 0;
+    const result = await prisma.compareItem.createMany({
+        data: products.map((p) => ({
+            sku: p.sku,
+            name: p.name,
+            physicalQty: 0,
+            systemQty: 0,
+            status: "BELUM_COMPARE",
+            sessionId,
+        })),
+        skipDuplicates: true,
+    });
+    return result.count;
 }
 async function getOrCreateActiveSession(office) {
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
     let session = await prisma.opnameSession.findFirst({
         where: {
-            office,
+            office: { in: officeKeys },
             status: "ONGOING",
         },
         orderBy: { createdAt: "desc" },
@@ -130,77 +171,39 @@ async function getOrCreateActiveSession(office) {
     }
     return session;
 }
-async function fetchSystemQtyForSku(sku, locationCode) {
-    try {
-        const response = await axios.get(`${getReusableApiBase()}/api/v1/inventory/count`, {
-            params: { No: sku, locationCode },
-            headers: getReusableApiHeaders(),
-            validateStatus: () => true,
-        });
-        if (response.status >= 400)
-            return null;
-        // API sering kirim inventoryResult: null — jangan anggap 0 valid
-        if (response.data?.inventoryResult === undefined ||
-            response.data?.inventoryResult === null) {
-            return null;
-        }
-        return resolveStockQty(response.data);
-    }
-    catch {
-        return null;
-    }
-}
-/**
- * Ambil SOT per SKU. Utama: SOAP batch (inventory/count REST sering null).
- * Fallback REST hanya jika SOAP gagal total.
- */
 async function loadSystemQtyBySku(skus, locationCode) {
-    const qtyBySku = new Map();
     const uniqueSkus = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
     if (!uniqueSkus.length)
-        return qtyBySku;
-    if (isSoapStockConfigured()) {
-        try {
-            const soapQtys = await checkStockMulti({
-                skus: uniqueSkus,
-                locationCode,
-                batchSize: 1,
-            });
-            for (const [sku, qty] of soapQtys) {
-                qtyBySku.set(sku.toUpperCase(), qty);
-            }
-            if (qtyBySku.size > 0)
-                return qtyBySku;
-        }
-        catch (error) {
-            console.error("[sku-reminder] open-period SOAP batch failed, falling back REST:", errorMessage(error));
-        }
+        return new Map();
+    if (!isSoapStockConfigured()) {
+        throw new Error("SOAP stock belum dikonfigurasi (SOAP_STOCK_CHECK_DUMP / credentials)");
     }
-    const concurrency = 8;
-    for (let i = 0; i < uniqueSkus.length; i += concurrency) {
-        const batch = uniqueSkus.slice(i, i + concurrency);
-        const results = await Promise.all(batch.map(async (sku) => {
-            const qty = await fetchSystemQtyForSku(sku, locationCode);
-            return { sku, qty };
-        }));
-        for (const { sku, qty } of results) {
-            if (qty === null)
-                continue;
-            qtyBySku.set(sku.toUpperCase(), qty);
-        }
-    }
-    return qtyBySku;
+    // GetInventoryOnlyByLocation = 1 SKU/call; concurrency diatur di stock-soap
+    return checkStockMulti({
+        skus: uniqueSkus,
+        locationCode,
+    });
 }
 async function fillSystemQtyFromNav(office) {
+    const emptyQty = new Map();
     const locationCode = (await resolveLocationCode(office)) ??
         (await mapOfficeToLocation(office));
     if (!locationCode) {
-        return { locationCode: null, updatedCount: 0, failedCount: 0 };
+        return {
+            locationCode: null,
+            updatedCount: 0,
+            failedCount: 0,
+            seededCount: 0,
+            positiveQtyCount: 0,
+            qtyBySku: emptyQty,
+        };
     }
-    // Semua sesi ONGOING gudang ini (hindari SOT hanya mengisi sesi kosong/salah)
+    // Semua sesi ONGOING gudang ini (officeName ATAU locationCode di DB)
+    const aliases = await resolveOfficeAliases(office);
+    const officeKeys = aliases.length ? aliases : [office];
     const sessions = await prisma.opnameSession.findMany({
         where: {
-            office,
+            office: { in: officeKeys },
             status: "ONGOING",
         },
         orderBy: { createdAt: "desc" },
@@ -209,14 +212,43 @@ async function fillSystemQtyFromNav(office) {
     const sessionIds = sessions.length
         ? sessions.map((s) => s.id)
         : [session.id];
+    // Seed katalog penuh ke sesi utama dulu — supaya SKU "belum dikerjakan"
+    // juga punya CompareItem + systemQty dari SOAP, bukan menunggu scan.
+    const primarySessionId = sessionIds[0] ?? session.id;
+    const seededCount = await ensureSessionCompareCatalog(primarySessionId);
     const items = await prisma.compareItem.findMany({
         where: { sessionId: { in: sessionIds } },
     });
     const visibleItems = items.filter((item) => !isHiddenProductSku(item.sku));
     if (!visibleItems.length) {
-        return { locationCode, updatedCount: 0, failedCount: 0 };
+        return {
+            locationCode,
+            updatedCount: 0,
+            failedCount: 0,
+            seededCount,
+            positiveQtyCount: 0,
+            qtyBySku: emptyQty,
+        };
     }
+    console.log(`[open-period] SOAP fill office=${office} location=${locationCode} items=${visibleItems.length}`);
     const qtyBySku = await loadSystemQtyBySku(visibleItems.map((item) => item.sku), locationCode);
+    let positiveQtyCount = 0;
+    for (const qty of qtyBySku.values()) {
+        if (qty > 0)
+            positiveQtyCount += 1;
+    }
+    // Jangan tulis systemQty / buka periode kalau SOAP semua 0 —
+    // kemungkinan NAV belum siap atau locationCode/SOAP salah.
+    if (positiveQtyCount === 0) {
+        return {
+            locationCode,
+            updatedCount: 0,
+            failedCount: visibleItems.length,
+            seededCount,
+            positiveQtyCount: 0,
+            qtyBySku,
+        };
+    }
     let updatedCount = 0;
     let failedCount = 0;
     for (const item of visibleItems) {
@@ -230,7 +262,12 @@ async function fillSystemQtyFromNav(office) {
         const physicalQty = item.finalCorrectionQty !== null && item.finalCorrectionQty !== undefined
             ? item.finalCorrectionQty
             : approvedPhysical;
-        const status = physicalQty === systemQty ? "SESUAI" : "SELISIH";
+        // Jangan tandai SESUAI untuk 0===0 — itu mengunci scan "belum dikerjakan"
+        const status = physicalQty <= 0
+            ? "BELUM_COMPARE"
+            : physicalQty === systemQty
+                ? "SESUAI"
+                : "SELISIH";
         await prisma.compareItem.update({
             where: { id: item.id },
             data: {
@@ -246,6 +283,9 @@ async function fillSystemQtyFromNav(office) {
         locationCode,
         updatedCount,
         failedCount,
+        seededCount,
+        positiveQtyCount,
+        qtyBySku,
     };
 }
 async function runClosePeriod(input) {
@@ -276,15 +316,15 @@ async function runClosePeriod(input) {
             updatedAt: now,
         },
     });
-    const period = await closeOfficePeriod(resolvedOffice, {
-        endPeriod: now,
-    });
+    const period = await closeOfficePeriod(resolvedOffice);
     return {
         office: resolvedOffice,
         totalSku: skus.length,
         mode: period.mode,
-        startPeriod: period.startPeriod?.toISOString() ?? null,
-        endPeriod: now.toISOString(),
+        // Alias API lama: start/end = opened/closed
+        startPeriod: period.openedAt?.toISOString() ?? null,
+        endPeriod: period.closedAt?.toISOString() ?? null,
+        openedAt: period.openedAt?.toISOString() ?? null,
         closedAt: period.closedAt?.toISOString() ?? null,
     };
 }
@@ -332,7 +372,29 @@ router.post("/open-period", async (req, res) => {
         if (!resolvedOffice) {
             return res.status(400).json({ message: "Office tidak valid" });
         }
+        const existingPeriod = await getOfficePeriod(resolvedOffice);
+        if (existingPeriod?.mode === "OPNAME") {
+            return res.status(400).json({
+                message: "Periode sudah dibuka. Tutup periode dulu jika ingin membuka ulang.",
+            });
+        }
         const filled = await fillSystemQtyFromNav(resolvedOffice);
+        if (filled.positiveQtyCount === 0) {
+            return res.status(400).json({
+                message: "Gagal buka periode: semua qty SOAP = 0. Cek stok NAV sudah ter-update, atau locationCode/SOAP salah.",
+                office: resolvedOffice,
+                locationCode: filled.locationCode,
+                updatedSystemQty: 0,
+                failedSystemQty: filled.failedCount,
+                positiveQtyCount: 0,
+            });
+        }
+        if (filled.updatedCount === 0) {
+            return res.status(400).json({
+                message: "Gagal mengisi systemQty dari SOAP",
+                locationCode: filled.locationCode,
+            });
+        }
         const period = await openOfficePeriod(resolvedOffice);
         let hiddenZeroQty = 0;
         if (filled.locationCode) {
@@ -340,6 +402,7 @@ router.post("/open-period", async (req, res) => {
                 hiddenZeroQty = await hideZeroQtySkuReminders({
                     office: resolvedOffice,
                     locationCode: filled.locationCode,
+                    qtyBySku: filled.qtyBySku,
                 });
             }
             catch (error) {
@@ -354,10 +417,13 @@ router.post("/open-period", async (req, res) => {
             locationCode: filled.locationCode,
             updatedSystemQty: filled.updatedCount,
             failedSystemQty: filled.failedCount,
+            positiveQtyCount: filled.positiveQtyCount,
+            seededCompareItems: filled.seededCount,
             hiddenZeroQty,
             openedAt: period.openedAt?.toISOString() ?? null,
-            startPeriod: period.startPeriod?.toISOString() ?? null,
-            endPeriod: period.endPeriod?.toISOString() ?? null,
+            startPeriod: period.openedAt?.toISOString() ?? null,
+            endPeriod: period.closedAt?.toISOString() ?? null,
+            closedAt: period.closedAt?.toISOString() ?? null,
         });
     }
     catch (error) {
@@ -417,7 +483,6 @@ router.get("/unresolved", async (req, res) => {
                 return delegation?.delegatedTo === appUser.username;
             });
         const summary = await getSkuReminderSummary(isAllOffice ? undefined : office);
-        const periodRow = scopedRows[0] ?? unresolved[0] ?? null;
         const officePeriod = !isAllOffice && office ? await getOfficePeriod(office) : null;
         const periodMode = officePeriod?.mode ?? "FREE";
         return res.json({
@@ -427,15 +492,12 @@ router.get("/unresolved", async (req, res) => {
             total: scopedRows.length,
             summary,
             period: {
-                startPeriod: officePeriod?.startPeriod?.toISOString() ??
-                    periodRow?.startPeriod ??
-                    null,
-                endPeriod: officePeriod?.endPeriod?.toISOString() ??
-                    periodRow?.endPeriod ??
-                    null,
                 mode: periodMode,
                 openedAt: officePeriod?.openedAt?.toISOString() ?? null,
                 closedAt: officePeriod?.closedAt?.toISOString() ?? null,
+                // Alias kompatibilitas frontend lama
+                startPeriod: officePeriod?.openedAt?.toISOString() ?? null,
+                endPeriod: officePeriod?.closedAt?.toISOString() ?? null,
             },
             data: isAllOffice
                 ? scopedRows

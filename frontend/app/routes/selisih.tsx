@@ -485,7 +485,7 @@ export default function SelisihPage() {
                 <button
                   onClick={() => openPeriodMutation.mutate()}
                   disabled={
-                    periodBusy || !canManagePeriod || periodMode === "OPNAME"
+                    periodBusy || !canManagePeriod
                   }
                   title={
                     !canManagePeriod
@@ -793,53 +793,7 @@ export default function SelisihPage() {
                                 BELUM
                               </span>
                             </td>
-                            {isAdmin && (
-                              <td>
-                                <div className="flex items-center gap-1.5 min-w-[180px]">
-                                  <select
-                                    className="select select-bordered select-xs font-semibold bg-white w-full max-w-[160px]"
-                                    value={item.delegatedTo ?? ""}
-                                    disabled={isDelegating}
-                                    onChange={(e) => {
-                                      delegateReminderMutation.mutate({
-                                        id: item.id,
-                                        office: entry.office,
-                                        delegatedTo: e.target.value || null,
-                                      });
-                                    }}
-                                  >
-                                    <option value="">
-                                      — Belum didelegasikan —
-                                    </option>
-                                    {operatorUsers
-                                      .filter(
-                                        (u) =>
-                                          !u.office ||
-                                          u.office.trim().toUpperCase() ===
-                                            "IT" ||
-                                          isMatchingOffice(
-                                            u.office,
-                                            entry.office,
-                                          ),
-                                      )
-                                      .map((u) => (
-                                        <option
-                                          key={u.username}
-                                          value={u.username}
-                                        >
-                                          {u.username}
-                                        </option>
-                                      ))}
-                                  </select>
-                                  {item.delegatedTo && (
-                                    <span className="badge badge-xs badge-info font-bold gap-0.5 shrink-0">
-                                      <UserCheck className="h-2.5 w-2.5" />
-                                      {item.delegatedTo}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                            )}
+                            <td>operator gudang terkait</td>
                             <td className="text-xs text-slate-600">
                               {toCanonicalOfficeName(entry.office)}
                             </td>

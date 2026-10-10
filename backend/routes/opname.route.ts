@@ -16,9 +16,12 @@ type SessionScopeWhere =
 import {
   reconcileApprovalAfterGroupChange,
   deleteScanQtyApprovals,
+  deleteGroupApproval,
   toScanGroups,
+  preferLatestStepScans,
   readOffice,
   sumApprovedQtyForSkuLocation,
+  resolveScanStep,
 } from "../utils/scan-approval.js";
 import {
   assertScanAccess,
@@ -608,15 +611,19 @@ router.post("/scan", async (req: any, res: Response) => {
       },
     });
 
-    if (await isSkuLockedAsSesuai(compareItem, loc)) {
+    const rakNum = Number(rak) || 1;
+    const qtyNum = Number(qty) || 0;
+    // Step ditentukan server: delegated ke operator ini → step 2 (hitungan ulang).
+    // Sum qty hanya jalan jika baris IDENTIK termasuk step yang sama.
+    const step = resolveScanStep(compareItem?.delegatedTo, operator);
+
+    // Operator yang sedang didelegasikan boleh hitung ulang meski status SESUAI.
+    if (step < 2 && (await isSkuLockedAsSesuai(compareItem, loc))) {
       return res.status(400).json({
         message: "sku untuk warehouse ini sudah sesuai dengan nav",
         error: "sku untuk warehouse ini sudah sesuai dengan nav",
       });
     }
-
-    const rakNum = Number(rak) || 1;
-    const qtyNum = Number(qty) || 0;
 
     const existing = await prisma.scanLog.findFirst({
       where: {
@@ -625,6 +632,7 @@ router.post("/scan", async (req: any, res: Response) => {
         rak: rakNum,
         office: loc,
         operator,
+        step,
       } as never,
     });
 
@@ -647,8 +655,14 @@ router.post("/scan", async (req: any, res: Response) => {
             operator,
             office: loc,
             sessionId: session.id,
+            step,
           } as never,
         });
+
+    // Hitungan ulang (step 2) → approval rak lama tidak valid, admin harus tetapkan ulang
+    if (step >= 2) {
+      await deleteGroupApproval(session.id, sku, rakNum, loc);
+    }
 
     // Record tracing input log for auditing scan changes
     await traceInput({
@@ -721,14 +735,16 @@ router.post("/scan", async (req: any, res: Response) => {
       },
     });
 
-    const groupScans = await prisma.scanLog.findMany({
-      where: {
-        sessionId: session.id,
-        sku,
-        rak: scan.rak,
-        office: loc,
-      },
-    });
+    const groupScans = preferLatestStepScans(
+      await prisma.scanLog.findMany({
+        where: {
+          sessionId: session.id,
+          sku,
+          rak: scan.rak,
+          office: loc,
+        },
+      }),
+    );
 
     await reconcileApprovalAfterGroupChange(toScanGroups(groupScans));
 
@@ -736,6 +752,7 @@ router.post("/scan", async (req: any, res: Response) => {
       scan,
       isUpdate: Boolean(existing),
       previousQty,
+      step,
     });
   } catch (error: unknown) {
     console.error("Scan API Error:", errorMessage(error));
@@ -902,6 +919,107 @@ router.get("/scans", async (req: any, res: Response) => {
     });
 
     return res.json(scans.filter((scan) => !isHiddenProductSku(scan.sku)));
+  } catch (error: unknown) {
+    return res.status(500).json({ error: errorMessage(error) });
+  }
+});
+
+router.post("/findExistingScan", async (req: any, res: Response) => {
+  // Cek scan IDENTIK: sku + rak + office + operator + periode + step
+  // Step ditentukan server dari delegasi (bukan dari body FE).
+  try {
+    const appUser = await resolveAppUser(req);
+    const { sku: rawSku, rak, office } = req.body as {
+      sku?: string;
+      rak?: number | string;
+      office?: string;
+    };
+
+    const sku = (rawSku ?? "").trim();
+    const rakNum = Number(rak);
+    if (!sku) {
+      return res.status(400).json({ message: "SKU wajib diisi" });
+    }
+    if (!Number.isFinite(rakNum) || rakNum <= 0) {
+      return res.status(400).json({ message: "Nomor rak tidak valid" });
+    }
+
+    const access = assertScanAccess(appUser, office);
+    if (!access.ok) {
+      return res.status(access.status).json({ message: access.message });
+    }
+
+    const rawOffice = office?.trim() || appUser?.office?.trim();
+    if (!rawOffice) {
+      return res.status(403).json({
+        message:
+          "Lokasi office tidak ditemukan. Pilih atau hubungi admin untuk menyetel office.",
+      });
+    }
+
+    const loc = await resolveOfficeName(rawOffice);
+    if (!loc) {
+      return res.status(400).json({
+        message: `Office "${rawOffice}" tidak dikenali.`,
+      });
+    }
+
+    const operator = readJwtUsername(req.user);
+    if (!operator) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const session = await getOrCreateActiveSession(loc);
+
+    const compareItem = await prisma.compareItem.findUnique({
+      where: {
+        sessionId_sku: {
+          sessionId: session.id,
+          sku,
+        },
+      },
+    });
+
+    const step = resolveScanStep(compareItem?.delegatedTo, operator);
+    const delegated = step >= 2;
+
+    const existing = await prisma.scanLog.findFirst({
+      where: {
+        sessionId: session.id,
+        sku,
+        rak: rakNum,
+        office: loc,
+        operator,
+        step,
+      } as never,
+    });
+
+    if (!existing || existing.qty == null) {
+      return res.json({
+        exists: false,
+        qty: null,
+        delegated,
+        step,
+        sku,
+        rak: rakNum,
+        office: loc,
+        operator,
+        sessionId: session.id,
+      });
+    }
+
+    return res.json({
+      exists: true,
+      qty: existing.qty,
+      delegated,
+      step,
+      sku: existing.sku,
+      rak: existing.rak,
+      office: existing.office,
+      operator: existing.operator,
+      sessionId: session.id,
+      scanId: existing.id,
+    });
   } catch (error: unknown) {
     return res.status(500).json({ error: errorMessage(error) });
   }
